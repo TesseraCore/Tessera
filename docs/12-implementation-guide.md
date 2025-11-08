@@ -7,11 +7,11 @@ This guide outlines the implementation steps to build the Tessera deep zoom rend
 ## Phase 1: Foundation (Weeks 1-2)
 
 ### 1.1 Project Setup
-- [ ] Initialize monorepo (pnpm workspaces)
+- [ ] Initialize monorepo (Bun workspaces)
 - [ ] Set up TypeScript configuration
 - [ ] Configure build tools (Vite/esbuild)
 - [ ] Set up testing framework (Vitest/Jest)
-- [ ] Configure linting (ESLint) and formatting (Prettier)
+- [ ] Configure linting (oxlint) and formatting (oxfmt)
 
 ### 1.2 Core Infrastructure
 - [ ] Create `@tessera/core` package

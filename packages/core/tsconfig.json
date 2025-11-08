@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true
+  },
+  "include": ["src/**/*"],
+  "references": [
+    { "path": "../rendering" },
+    { "path": "../annotations" },
+    { "path": "../tools" },
+    { "path": "../events" },
+    { "path": "../units" },
+    { "path": "../utils" }
+  ]
+}
+

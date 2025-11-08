@@ -110,10 +110,10 @@ Tessera is a professional-grade, browser-based image viewer designed for applica
 
 ### Build Tools
 
-- **Vite/esbuild** - Fast bundling
+- **Bun** - Fast package manager and runtime
 - **TypeScript Compiler** - Type checking and compilation
 - **Vitest** - Unit testing
-- **ESLint & Prettier** - Code quality
+- **oxlint & oxfmt** - Code linting and formatting
 
 ## Browser Support
 
@@ -137,12 +137,12 @@ Tessera automatically detects available rendering backends and gracefully degrad
 ### Prerequisites
 
 - Node.js 18.0.0 or higher
-- pnpm 8.0.0 or higher
+- Bun 1.0.0 or higher
 
 ### Install Dependencies
 
 ```bash
-pnpm install
+bun install
 ```
 
 ## Development
@@ -152,15 +152,7 @@ pnpm install
 Build all packages:
 
 ```bash
-pnpm build
-```
-
-### Development Mode
-
-Run the demo application:
-
-```bash
-pnpm dev
+bun run build
 ```
 
 ### Testing
@@ -168,7 +160,7 @@ pnpm dev
 Run all tests:
 
 ```bash
-pnpm test
+bun run test
 ```
 
 ### Type Checking
@@ -176,7 +168,7 @@ pnpm test
 Type check all packages:
 
 ```bash
-pnpm typecheck
+bun run typecheck
 ```
 
 ### Linting & Formatting
@@ -184,13 +176,13 @@ pnpm typecheck
 Lint code:
 
 ```bash
-pnpm lint
+bun run lint
 ```
 
 Format code:
 
 ```bash
-pnpm format
+bun run format
 ```
 
 ## Project Structure
@@ -205,11 +197,11 @@ Tessera/
 │   ├── geometry/     # Geometry utilities
 │   ├── units/        # Units & calibration
 │   └── ...
-├── apps/             # Example applications
-│   └── demo/         # Demo application
 ├── docs/             # Project documentation
 └── README.md         # This file
 ```
+
+> **Note**: Demo applications and examples are hosted in separate repositories within the Tessera GitHub organization.
 
 ## Quick Start
 
@@ -301,7 +293,7 @@ Contributions are welcome! Please read the documentation first, especially:
 2. Create a feature branch
 3. Make your changes
 4. Add tests
-5. Run `pnpm lint` and `pnpm typecheck`
+5. Run `bun run lint` and `bun run typecheck`
 6. Submit a pull request
 
 ## License
@@ -331,7 +323,7 @@ MIT License - see LICENSE file for details
 For questions or issues:
 
 1. Check the [documentation](docs/) first
-2. Review examples in `apps/demo`
+2. Review examples in the Tessera organization repositories
 3. Check GitHub issues
 4. Ask in discussions
 

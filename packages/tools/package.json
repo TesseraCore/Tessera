@@ -1,0 +1,31 @@
+{
+  "name": "@tessera/tools",
+  "version": "0.1.0",
+  "description": "Drawing and editing tools for Tessera",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tessera/annotations": "workspace:*",
+    "@tessera/geometry": "workspace:*",
+    "@tessera/events": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  }
+}
+

@@ -1,0 +1,11 @@
+{
+  "typescript": {
+    "strict": true
+  },
+  "lint": {
+    "recommended": true,
+    "allow_unused_private_class_fields": false,
+    "allow_unused_variables": false
+  }
+}
+

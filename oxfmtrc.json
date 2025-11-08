@@ -1,0 +1,10 @@
+{
+  "indent_style": "space",
+  "indent_size": 2,
+  "line_width": 100,
+  "line_ending": "lf",
+  "quote_style": "single",
+  "semicolons": "always",
+  "arrow_parentheses": "as_needed"
+}
+

@@ -198,18 +198,6 @@ tessera/
 │       │   └── index.ts
 │       └── package.json
 │
-├── apps/                         # Example applications
-│   ├── demo/                     # Demo app
-│   │   ├── src/
-│   │   │   ├── App.tsx
-│   │   │   └── main.tsx
-│   │   ├── index.html
-│   │   └── package.json
-│   │
-│   └── medical/                  # Medical imaging example
-│       ├── src/
-│       └── package.json
-│
 ├── docs/                         # Documentation
 │   ├── 00-project-overview.md
 │   ├── 01-core-features.md
@@ -234,11 +222,10 @@ tessera/
 │       ├── ci.yml
 │       └── release.yml
 │
-├── package.json                  # Root package.json
-├── pnpm-workspace.yaml          # pnpm workspace config
+├── package.json                  # Root package.json (Bun workspaces)
 ├── tsconfig.json                 # Root TypeScript config
-├── .eslintrc.js                  # ESLint config
-├── .prettierrc                   # Prettier config
+├── .oxlintrc.json                # oxlint config
+├── oxfmtrc.json                  # oxfmt config
 ├── README.md
 └── LICENSE
 ```
@@ -265,9 +252,6 @@ package-name/
 
 ### `packages/`
 Monorepo packages (core library modules)
-
-### `apps/`
-Example applications demonstrating usage
 
 ### `docs/`
 Project documentation (this folder)
@@ -356,21 +340,7 @@ packages/core/dist/
 - Test full workflows
 - Use Playwright/Puppeteer
 
-## Example Application Structure
+## Example Applications
 
-```
-apps/demo/
-├── src/
-│   ├── components/             # React/Vue components
-│   │   ├── Viewer.tsx
-│   │   ├── Toolbar.tsx
-│   │   └── PropertiesPanel.tsx
-│   ├── App.tsx                 # Main app component
-│   ├── main.tsx                # Entry point
-│   └── styles.css
-├── public/                     # Static assets
-├── index.html
-├── vite.config.ts             # Vite config
-└── package.json
-```
+Example applications, demos, and templates are hosted in separate repositories within the Tessera GitHub organization.
 
