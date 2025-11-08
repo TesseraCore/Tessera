@@ -28,8 +28,8 @@
     "microscopy",
     "annotations"
   ],
-  "author": "",
-  "license": "MIT",
+  "author": "Adrian Darian",
+  "license": "MIT with Commercial Attribution Requirement",
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@lhci/cli": "^0.12.0",

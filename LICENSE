@@ -1,6 +1,6 @@
-MIT License
+MIT License with Commercial Attribution Requirement
 
-Copyright (c) 2024 Tessera Contributors
+Copyright (c) 2024 Adrian Darian and Tessera Contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -11,6 +11,19 @@ furnished to do so, subject to the following conditions:
 
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
+
+COMMERCIAL USE ATTRIBUTION REQUIREMENT:
+If the Software is used in any product, service, or application that generates
+revenue, is sold, or is part of a commercial offering (collectively, "Commercial
+Use"), you must provide prominent attribution to Adrian Darian. Such attribution
+shall be visible to end users and may be included in:
+- The product's "About" section or credits
+- Documentation or user manuals
+- A visible notice in the application interface
+- The product's website or marketing materials
+
+The attribution must include at minimum: "Built with Tessera by Adrian Darian"
+or similar language that clearly credits Adrian Darian.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
