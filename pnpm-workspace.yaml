@@ -3,3 +3,27 @@ packages:
 
 onlyBuiltDependencies:
   - esbuild
+
+catalog:
+  # TypeScript and testing
+  typescript: ^5.0.0
+  vitest: ^1.0.0
+  "@vitest/coverage-v8": ^1.0.0
+  
+  # Type definitions
+  "@types/node": ^20.0.0
+  
+  # Build tools
+  rolldown: ^1.0.0-beta.47
+  "rollup-plugin-visualizer": ^5.12.0
+  "size-limit": ^11.0.0
+  
+  # Code quality
+  oxfmt: latest
+  oxlint: latest
+  
+  # Dependency management
+  taze: ^0.10.0
+  
+  # CI/CD
+  "@lhci/cli": ^0.12.0

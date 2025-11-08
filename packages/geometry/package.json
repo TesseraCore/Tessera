@@ -21,8 +21,8 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "typescript": "^5.0.0",
-    "vitest": "^1.0.0"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }
 

@@ -31,17 +31,17 @@
   "author": "Adrian Darian",
   "license": "MIT with Commercial Attribution Requirement",
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "@lhci/cli": "^0.12.0",
-    "oxfmt": "latest",
-    "oxlint": "latest",
-    "rolldown": "^1.0.0",
-    "rollup-plugin-visualizer": "^5.12.0",
-    "size-limit": "^11.0.0",
-    "taze": "^0.10.0",
-    "typescript": "^5.0.0",
-    "vitest": "^1.0.0",
-    "@vitest/coverage-v8": "^1.0.0"
+    "@types/node": "catalog:",
+    "@lhci/cli": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "rolldown": "catalog:",
+    "rollup-plugin-visualizer": "catalog:",
+    "size-limit": "catalog:",
+    "taze": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
   },
   "engines": {
     "node": ">=18.0.0",
