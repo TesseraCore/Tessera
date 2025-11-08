@@ -16,7 +16,9 @@
 // Core viewer functionality
 export { Viewer } from './viewer.js';
 export { Viewport } from './viewport.js';
-export type { ViewerState } from './state.js';
+export type { ViewerState, ViewerOptions, RenderBackendType } from './state.js';
+export type { ViewportOptions, ViewportState, ViewUniforms, ViewportEvents } from './viewport.js';
+export type { ViewerEvents } from './viewer.js';
 
 // Rendering engine - explicit exports for tree-shaking
 export {
