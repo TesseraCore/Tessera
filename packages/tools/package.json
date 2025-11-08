@@ -1,6 +1,7 @@
 {
   "name": "@tessera/tools",
   "version": "0.1.0",
+  "private": true,
   "description": "Drawing and editing tools for Tessera",
   "type": "module",
   "main": "./dist/index.js",

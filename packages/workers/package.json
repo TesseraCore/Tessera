@@ -1,6 +1,7 @@
 {
   "name": "@tessera/workers",
   "version": "0.1.0",
+  "private": true,
   "description": "Web Worker utilities for Tessera",
   "type": "module",
   "main": "./dist/index.js",

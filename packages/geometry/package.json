@@ -1,6 +1,7 @@
 {
   "name": "@tessera/geometry",
   "version": "0.1.0",
+  "private": true,
   "description": "2D geometry operations for Tessera",
   "type": "module",
   "main": "./dist/index.js",

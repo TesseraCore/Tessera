@@ -1,7 +1,7 @@
 {
-  "name": "@tessera/core",
+  "name": "tessera",
   "version": "0.1.0",
-  "description": "Core viewer library for Tessera",
+  "description": "A next-generation deep zoom image renderer built with WebGPU",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -24,7 +24,14 @@
     "@tessera/tools": "workspace:*",
     "@tessera/events": "workspace:*",
     "@tessera/units": "workspace:*",
-    "@tessera/utils": "workspace:*"
+    "@tessera/utils": "workspace:*",
+    "@tessera/geometry": "workspace:*",
+    "@tessera/text": "workspace:*",
+    "@tessera/graph": "workspace:*",
+    "@tessera/formats": "workspace:*",
+    "@tessera/import": "workspace:*",
+    "@tessera/export": "workspace:*",
+    "@tessera/workers": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.0.0",

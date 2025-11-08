@@ -24,7 +24,7 @@ This project adheres to a [Code of Conduct](CODE_OF_CONDUCT.md). By participatin
 ### Prerequisites
 
 - **Node.js**: 18.0.0 or higher
-- **Bun**: 1.0.0 or higher
+- **pnpm**: 8.0.0 or higher
 - **Git**: Latest version
 - **Modern Browser**: For testing (Chrome 113+, Firefox 110+, Safari 16.4+)
 
@@ -40,22 +40,22 @@ This project adheres to a [Code of Conduct](CODE_OF_CONDUCT.md). By participatin
 
 3. **Install dependencies**:
    ```bash
-   bun install
+   pnpm install
    ```
 
 4. **Build the project**:
    ```bash
-   bun run build
+   pnpm build
    ```
 
 5. **Run tests** to verify everything works:
    ```bash
-   bun run test
+   pnpm test
    ```
 
 6. **Run type checking**:
    ```bash
-   bun run typecheck
+   pnpm typecheck
    ```
 
 ## Development Workflow
@@ -90,16 +90,16 @@ Before submitting a pull request:
 
 ```bash
 # Run all tests
-bun run test
+pnpm test
 
 # Type check
-bun run typecheck
+pnpm typecheck
 
 # Lint code
-bun run lint
+pnpm lint
 
 # Format code
-bun run format
+pnpm format
 ```
 
 ### 4. Commit Your Changes
@@ -171,8 +171,8 @@ packages/
 
 ### Code Style
 
-- **Formatting**: Use `oxfmt` (run `bun run format`)
-- **Linting**: Use `oxlint` (run `bun run lint`)
+- **Formatting**: Use `oxfmt` (run `pnpm format`)
+- **Linting**: Use `oxlint` (run `pnpm lint`)
 - **Line Length**: Keep lines under 100 characters when possible
 - **Indentation**: 2 spaces (no tabs)
 
@@ -264,13 +264,13 @@ describe('MyClass', () => {
 
 ```bash
 # Run all tests
-bun run test
+pnpm test
 
 # Run tests in watch mode
-bun run test --watch
+pnpm test --watch
 
 # Run tests for a specific package
-cd packages/core && bun test
+cd packages/core && pnpm test
 ```
 
 ## Documentation
@@ -299,9 +299,9 @@ cd packages/core && bun test
 ### Before Submitting
 
 - [ ] Code follows the project's style guidelines
-- [ ] Tests pass locally (`bun run test`)
-- [ ] Type checking passes (`bun run typecheck`)
-- [ ] Linting passes (`bun run lint`)
+- [ ] Tests pass locally (`pnpm test`)
+- [ ] Type checking passes (`pnpm typecheck`)
+- [ ] Linting passes (`pnpm lint`)
 - [ ] Documentation is updated
 - [ ] Commits follow the commit message format
 - [ ] Branch is up to date with `main`

@@ -1,6 +1,7 @@
 {
   "name": "@tessera/utils",
   "version": "0.1.0",
+  "private": true,
   "description": "Shared utilities for Tessera",
   "type": "module",
   "main": "./dist/index.js",

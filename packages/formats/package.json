@@ -1,6 +1,7 @@
 {
   "name": "@tessera/formats",
   "version": "0.1.0",
+  "private": true,
   "description": "Image format support for Tessera",
   "type": "module",
   "main": "./dist/index.js",

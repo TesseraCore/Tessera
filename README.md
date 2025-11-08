@@ -110,7 +110,7 @@ Tessera is a professional-grade, browser-based image viewer designed for applica
 
 ### Build Tools
 
-- **Bun** - Fast package manager and runtime
+- **pnpm** - Fast, disk space efficient package manager
 - **TypeScript Compiler** - Type checking and compilation
 - **Vitest** - Unit testing
 - **oxlint & oxfmt** - Code linting and formatting
@@ -137,12 +137,12 @@ Tessera automatically detects available rendering backends and gracefully degrad
 ### Prerequisites
 
 - Node.js 18.0.0 or higher
-- Bun 1.0.0 or higher
+- pnpm 8.0.0 or higher
 
 ### Install Dependencies
 
 ```bash
-bun install
+pnpm install
 ```
 
 ## Development
@@ -152,7 +152,7 @@ bun install
 Build all packages:
 
 ```bash
-bun run build
+pnpm build
 ```
 
 ### Testing
@@ -160,7 +160,7 @@ bun run build
 Run all tests:
 
 ```bash
-bun run test
+pnpm test
 ```
 
 ### Type Checking
@@ -168,7 +168,7 @@ bun run test
 Type check all packages:
 
 ```bash
-bun run typecheck
+pnpm typecheck
 ```
 
 ### Linting & Formatting
@@ -203,10 +203,26 @@ Tessera/
 
 > **Note**: Demo applications and examples are hosted in separate repositories within the Tessera GitHub organization.
 
+## Installation
+
+```bash
+npm install tessera
+# or
+pnpm add tessera
+# or
+yarn add tessera
+```
+
 ## Quick Start
 
 ```typescript
-import { Viewer } from '@tessera/core';
+// Import only what you need - tree-shaking eliminates unused code
+import { 
+  Viewer, 
+  RectangleTool, 
+  TIFFParser,
+  AnnotationStore 
+} from 'tessera';
 
 // Create a viewer instance
 const viewer = new Viewer({
@@ -235,6 +251,32 @@ viewer.annotations.add({
 // Activate a tool
 viewer.tools.activate('rectangle');
 ```
+
+### Tree-Shaking Support
+
+Tessera uses explicit named exports throughout for optimal tree-shaking:
+
+```typescript
+// ✅ Only imports what you need - unused code is eliminated
+import { Viewer, RectangleTool } from 'tessera';
+// Bundler will exclude: TIFFParser, AnnotationStore, WebGPUBackend, etc.
+
+// ✅ All features available from single package
+import { 
+  Viewer,              // Core viewer
+  WebGPUBackend,       // Rendering (from private package)
+  AnnotationStore,     // Annotations (from private package)
+  RectangleTool,       // Tools (from private package)
+  TIFFParser,          // Formats (from private package)
+  importGeoJSON,       // Import (from private package)
+  exportSVG,           // Export (from private package)
+} from 'tessera';
+
+// ❌ Don't import from private packages directly
+import { AnnotationStore } from '@tessera/annotations'; // DON'T DO THIS
+```
+
+> **Note**: All functionality is available from `tessera`. Internal packages are private and should not be imported directly. The explicit named export pattern ensures optimal tree-shaking.
 
 ## Architecture
 

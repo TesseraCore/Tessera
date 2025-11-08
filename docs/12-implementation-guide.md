@@ -14,7 +14,7 @@ This guide outlines the implementation steps to build the Tessera deep zoom rend
 - [ ] Configure linting (oxlint) and formatting (oxfmt)
 
 ### 1.2 Core Infrastructure
-- [ ] Create `@tessera/core` package
+- [ ] Create `tessera` package (internal: `packages/core`)
 - [ ] Implement basic `Viewer` class
 - [ ] Set up `Viewport` management
 - [ ] Implement event system (`@tessera/events`)
@@ -249,7 +249,7 @@ This guide outlines the implementation steps to build the Tessera deep zoom rend
 
 1. **Review Documentation**: Read all docs in `docs/` folder
 2. **Set Up Environment**: Install dependencies, configure tools
-3. **Start with Core**: Implement `@tessera/core` first
+3. **Start with Core**: Implement `tessera` (packages/core) first
 4. **Iterate**: Build incrementally, test frequently
 5. **Get Feedback**: Share progress, adjust as needed
 

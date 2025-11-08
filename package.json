@@ -4,16 +4,13 @@
   "description": "A next-generation deep zoom image renderer built with WebGPU",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "packages/*"
-  ],
   "scripts": {
-    "build": "bun run --filter './packages/**' build",
-    "test": "bun run --filter './packages/**' test",
+    "build": "pnpm --filter './packages/**' build",
+    "test": "pnpm --filter './packages/**' test",
     "lint": "oxlint",
     "format": "oxfmt",
-    "typecheck": "bun run --filter './packages/**' typecheck",
-    "clean": "bun run --filter './packages/**' exec rm -rf dist"
+    "typecheck": "pnpm --filter './packages/**' typecheck",
+    "clean": "pnpm --filter './packages/**' exec rm -rf dist"
   },
   "keywords": [
     "image-viewer",
@@ -34,7 +31,6 @@
   },
   "engines": {
     "node": ">=18.0.0",
-    "bun": ">=1.0.0"
+    "pnpm": ">=8.0.0"
   }
 }
-

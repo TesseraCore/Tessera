@@ -1,6 +1,7 @@
 {
   "name": "@tessera/annotations",
   "version": "0.1.0",
+  "private": true,
   "description": "Annotation system and plugin architecture for Tessera",
   "type": "module",
   "main": "./dist/index.js",

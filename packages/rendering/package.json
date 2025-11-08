@@ -1,6 +1,7 @@
 {
   "name": "@tessera/rendering",
   "version": "0.1.0",
+  "private": true,
   "description": "Rendering engine and backend abstraction for Tessera",
   "type": "module",
   "main": "./dist/index.js",

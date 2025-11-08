@@ -25,6 +25,8 @@ Welcome to the Tessera project documentation. This folder contains comprehensive
 12. **[09-units-system.md](./09-units-system.md)** - Units, measurements, and calibration tools
 13. **[10-plugin-system.md](./10-plugin-system.md)** - Plugin architecture and extensibility
 14. **[13-webgpu-implementation-details.md](./13-webgpu-implementation-details.md)** - WebGPU-specific implementation, optimizations, and advanced features
+15. **[14-package-dependencies.md](./14-package-dependencies.md)** - Package dependency graph, rules, and architecture
+16. **[15-package-flow.md](./15-package-flow.md)** - How packages flow together, data flow, and runtime execution
 
 ## Quick Start
 

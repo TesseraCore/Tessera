@@ -1,6 +1,7 @@
 {
   "name": "@tessera/import",
   "version": "0.1.0",
+  "private": true,
   "description": "Import plugins for Tessera annotations",
   "type": "module",
   "main": "./dist/index.js",

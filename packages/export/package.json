@@ -1,6 +1,7 @@
 {
   "name": "@tessera/export",
   "version": "0.1.0",
+  "private": true,
   "description": "Export plugins for Tessera annotations",
   "type": "module",
   "main": "./dist/index.js",

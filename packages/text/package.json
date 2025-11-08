@@ -1,6 +1,7 @@
 {
   "name": "@tessera/text",
   "version": "0.1.0",
+  "private": true,
   "description": "Text rendering and editing for Tessera",
   "type": "module",
   "main": "./dist/index.js",

@@ -1,18 +1,27 @@
-# @tessera/core
+# tessera
 
-Core viewer library for Tessera. This package provides the main entry point and viewer orchestration.
+Deep zoom image renderer built with WebGPU. This package provides the main entry point and all functionality.
 
 ## Installation
 
 ```bash
-bun add @tessera/core
+npm install tessera
+# or
+pnpm add tessera
+# or
+yarn add tessera
 ```
 
 ## Usage
 
 ```typescript
-import { createViewer } from '@tessera/core';
+import { Viewer, RectangleTool, TIFFParser } from 'tessera';
 
-const viewer = createViewer(canvas);
+const viewer = new Viewer({
+  canvas: document.getElementById('canvas'),
+  imageUrl: 'path/to/image.tiff',
+});
 ```
+
+> **Note**: This package is published as `tessera` on npm. Internal packages (`@tessera/*`) are private and should not be imported directly.
 

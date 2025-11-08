@@ -1,6 +1,7 @@
 {
   "name": "@tessera/events",
   "version": "0.1.0",
+  "private": true,
   "description": "Event system for Tessera",
   "type": "module",
   "main": "./dist/index.js",

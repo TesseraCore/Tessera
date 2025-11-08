@@ -4,14 +4,14 @@
 
 ### Core Modules
 
-#### 1. `@tessera/core`
+#### 1. `tessera` (published package, internal: `packages/core`)
 **Purpose**: Main entry point and viewer orchestration
 
 **Exports**:
-- `createViewer()`: Factory function to create viewer instance
 - `Viewer`: Main viewer class
-- `ViewerState`: State management
 - `Viewport`: Viewport management
+- `ViewerState`: State management
+- All functionality from other modules (re-exported)
 
 **Dependencies**: All other modules
 
@@ -210,7 +210,7 @@
 ## Module Dependencies Graph
 
 ```
-@tessera/core
+tessera (packages/core)
 ├── @tessera/rendering
 │   └── @tessera/utils
 ├── @tessera/annotations
@@ -248,7 +248,7 @@
 ## Module Size Estimates
 
 ### Core Bundle (Minimal)
-- `@tessera/core`: ~50KB
+- `tessera`: ~50KB (core) + ~290KB (dependencies)
 - `@tessera/rendering`: ~100KB
 - `@tessera/annotations`: ~80KB
 - `@tessera/tools`: ~60KB
@@ -273,17 +273,35 @@
 
 ## Module Loading Strategy
 
+### Single Package Publishing
+
+**Important**: Only `tessera` is published to npm. All other packages are internal and marked as `private: true`. This ensures:
+
+- **Single entry point**: Users only need to install one package
+- **Simplified versioning**: One version number for the entire library
+- **No circular dependencies**: Strict dependency flow prevents cycles
+- **Tree-shaking support**: Bundlers can still eliminate unused code
+
 ### ESM (Recommended)
 ```typescript
-import { createViewer } from '@tessera/core';
-import { RectangleTool } from '@tessera/tools';
-import { TIFFSource } from '@tessera/formats';
+// ✅ Correct: Import everything from tessera
+import { 
+  Viewer, 
+  RectangleTool, 
+  TIFFParser,
+  AnnotationStore,
+  EventEmitter 
+} from 'tessera';
+
+// ❌ Incorrect: Don't import from internal packages
+import { RectangleTool } from '@tessera/tools'; // DON'T DO THIS
 ```
 
 ### Tree Shaking
 - All modules support tree shaking
-- Import only what you need
+- Import only what you need from `tessera`
 - Unused code eliminated by bundler
+- Internal package structure is transparent to users
 
 ### Code Splitting
 - Core modules: Load immediately
@@ -294,12 +312,24 @@ import { TIFFSource } from '@tessera/formats';
 ## Module Versioning
 
 ### Version Strategy
+- **Single version**: All packages share the same version number
 - **Major**: Breaking API changes
 - **Minor**: New features, backward compatible
 - **Patch**: Bug fixes, backward compatible
 
 ### Compatibility
-- Modules within same major version are compatible
-- Cross-major version may require migration
+- All packages are always compatible (same version)
+- No cross-package version conflicts
 - Deprecation warnings before breaking changes
+
+## Internal Package Structure
+
+While users only interact with `tessera`, the internal structure is organized into packages for:
+
+- **Development**: Easier to work with smaller, focused packages
+- **Build optimization**: Independent compilation and caching
+- **Testing**: Isolated unit tests per package
+- **Dependency management**: Clear dependency boundaries
+
+See [Package Dependencies](14-package-dependencies.md) for detailed information about internal package structure and dependency rules.
 
