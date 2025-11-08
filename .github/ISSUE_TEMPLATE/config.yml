@@ -1,0 +1,12 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 💬 Ask a Question
+    url: https://github.com/YOUR_USERNAME/Tessera/discussions/new?category=q-and-a
+    about: Ask questions and get help from the community
+  - name: 💡 Share an Idea
+    url: https://github.com/YOUR_USERNAME/Tessera/discussions/new?category=ideas
+    about: Share ideas and brainstorm improvements
+  - name: 📚 Documentation
+    url: https://github.com/YOUR_USERNAME/Tessera/tree/main/docs
+    about: Check out our documentation
+
