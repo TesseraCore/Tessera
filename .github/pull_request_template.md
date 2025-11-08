@@ -95,8 +95,8 @@ Related to #
 - [ ] My changes generate no new warnings or errors
 - [ ] I have added tests that prove my fix is effective or that my feature works
 - [ ] New and existing unit tests pass locally with my changes
-- [ ] I have run `pnpm lint` and fixed any issues
-- [ ] I have run `pnpm typecheck` and fixed any type errors
+- [ ] I have run `bun run lint` and fixed any issues
+- [ ] I have run `bun run typecheck` and fixed any type errors
 - [ ] I have tested the changes in the demo application (if applicable)
 - [ ] Any dependent changes have been merged and published
 
