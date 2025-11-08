@@ -6,11 +6,19 @@
   "type": "module",
   "scripts": {
     "build": "pnpm --filter './packages/**' build",
+    "build:demo": "echo 'Demo build not configured yet'",
     "test": "pnpm --filter './packages/**' test",
+    "test:coverage": "pnpm --filter './packages/**' test --coverage",
     "lint": "oxlint",
     "format": "oxfmt",
+    "format:check": "oxfmt --check",
     "typecheck": "pnpm --filter './packages/**' typecheck",
-    "clean": "pnpm --filter './packages/**' exec rm -rf dist"
+    "clean": "pnpm --filter './packages/**' exec rm -rf dist",
+    "bundle:analyze": "rolldown --config rolldown.config.js",
+    "size-limit": "size-limit",
+    "lighthouse:ci": "lhci autorun",
+    "dependency:check": "taze --write",
+    "dependency:report": "taze --output dependency-report.md --mode default"
   },
   "keywords": [
     "image-viewer",
@@ -24,13 +32,77 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@lhci/cli": "^0.12.0",
     "oxfmt": "latest",
     "oxlint": "latest",
+    "rolldown": "^1.0.0",
+    "rollup-plugin-visualizer": "^5.12.0",
+    "size-limit": "^11.0.0",
+    "taze": "^0.10.0",
     "typescript": "^5.0.0",
-    "vitest": "^1.0.0"
+    "vitest": "^1.0.0",
+    "@vitest/coverage-v8": "^1.0.0"
   },
   "engines": {
     "node": ">=18.0.0",
     "pnpm": ">=8.0.0"
-  }
+  },
+  "size-limit": [
+    {
+      "path": "packages/core/dist/bundle.js",
+      "limit": "500 KB"
+    },
+    {
+      "path": "packages/rendering/dist/bundle.js",
+      "limit": "300 KB"
+    },
+    {
+      "path": "packages/annotations/dist/bundle.js",
+      "limit": "200 KB"
+    },
+    {
+      "path": "packages/tools/dist/bundle.js",
+      "limit": "150 KB"
+    },
+    {
+      "path": "packages/geometry/dist/bundle.js",
+      "limit": "100 KB"
+    },
+    {
+      "path": "packages/text/dist/bundle.js",
+      "limit": "250 KB"
+    },
+    {
+      "path": "packages/formats/dist/bundle.js",
+      "limit": "200 KB"
+    },
+    {
+      "path": "packages/export/dist/bundle.js",
+      "limit": "150 KB"
+    },
+    {
+      "path": "packages/import/dist/bundle.js",
+      "limit": "100 KB"
+    },
+    {
+      "path": "packages/units/dist/bundle.js",
+      "limit": "100 KB"
+    },
+    {
+      "path": "packages/workers/dist/bundle.js",
+      "limit": "100 KB"
+    },
+    {
+      "path": "packages/graph/dist/bundle.js",
+      "limit": "100 KB"
+    },
+    {
+      "path": "packages/utils/dist/bundle.js",
+      "limit": "50 KB"
+    },
+    {
+      "path": "packages/events/dist/bundle.js",
+      "limit": "50 KB"
+    }
+  ]
 }

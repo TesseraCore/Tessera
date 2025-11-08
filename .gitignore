@@ -39,3 +39,10 @@ bun-debug.log*
 tmp/
 temp/
 *.tmp
+
+# CI artifacts
+.lighthouseci/
+dependency-report.md
+packages/*/dist/bundle.js
+packages/*/dist/bundle-stats.html
+packages/*/coverage/
