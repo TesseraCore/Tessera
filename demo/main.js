@@ -275,7 +275,8 @@ function getSampleImages() {
   // Use Vite's import.meta.glob to get all files from the samples folder
   const images = import.meta.glob('/samples/*', { 
     eager: false, 
-    as: 'url'
+    query: '?url',
+    import: 'default'
   });
   
   // Filter out .gitkeep and README.md, then return array of { path, filename, importFn } objects
