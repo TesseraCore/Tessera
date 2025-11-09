@@ -55,6 +55,26 @@
       border-color: #0088ff;
     }
 
+    select {
+      padding: 0.25rem 0.75rem;
+      background: #4a4a4a;
+      border: 1px solid #5a5a5a;
+      color: #e0e0e0;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.75rem;
+      transition: background 0.2s;
+    }
+
+    select:hover {
+      background: #5a5a5a;
+    }
+
+    select:focus {
+      outline: none;
+      border-color: #0088ff;
+    }
+
     .info {
       padding: 0.25rem 0.75rem;
       background: #2a2a2a;
@@ -148,7 +168,9 @@
 </head>
 <body>
   <div class="controls">
-    <button id="load-image-btn">Load Test Image</button>
+    <select id="image-select">
+      <option value="">Select an image...</option>
+    </select>
     <button id="zoom-in-btn">Zoom In</button>
     <button id="zoom-out-btn">Zoom Out</button>
     <button id="reset-view-btn">Reset View</button>
@@ -163,12 +185,24 @@
         <span class="status-value" id="backend-status">-</span>
       </div>
       <div class="status-item">
-        <span class="status-label">Ready:</span>
-        <span class="status-value" id="ready-status">-</span>
-      </div>
-      <div class="status-item">
         <span class="status-label">Image:</span>
         <span class="status-value" id="image-status">-</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Format:</span>
+        <span class="status-value" id="format-status">-</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Zoom:</span>
+        <span class="status-value" id="zoom-status">-</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Pan:</span>
+        <span class="status-value" id="pan-status">-</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Viewport:</span>
+        <span class="status-value" id="viewport-status">-</span>
       </div>
     </div>
     <div class="loading" id="loading" style="display: none;">

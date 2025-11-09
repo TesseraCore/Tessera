@@ -8,16 +8,21 @@ import { Viewer } from '@tessera/core';
 
 // Get DOM elements
 const canvas = document.getElementById('canvas');
-const loadImageBtn = document.getElementById('load-image-btn');
+const imageSelect = document.getElementById('image-select');
 const zoomInBtn = document.getElementById('zoom-in-btn');
 const zoomOutBtn = document.getElementById('zoom-out-btn');
 const resetViewBtn = document.getElementById('reset-view-btn');
 const backendInfo = document.getElementById('backend-info');
 const backendStatus = document.getElementById('backend-status');
-const readyStatus = document.getElementById('ready-status');
 const imageStatus = document.getElementById('image-status');
+const formatStatus = document.getElementById('format-status');
+const zoomStatus = document.getElementById('zoom-status');
+const panStatus = document.getElementById('pan-status');
+const viewportStatus = document.getElementById('viewport-status');
 const loading = document.getElementById('loading');
 const error = document.getElementById('error');
+
+let currentImageName = null;
 
 let viewer = null;
 
@@ -53,27 +58,73 @@ function hideLoading() {
 }
 
 /**
+ * Format number with commas for thousands
+ */
+function formatNumber(num) {
+  return num.toLocaleString();
+}
+
+/**
+ * Format zoom as percentage
+ */
+function formatZoom(zoom) {
+  return `${(zoom * 100).toFixed(1)}%`;
+}
+
+/**
+ * Format pan coordinates
+ */
+function formatPan(pan) {
+  const [x, y] = pan;
+  return `${Math.round(x)}, ${Math.round(y)}`;
+}
+
+/**
  * Update status display
  */
 function updateStatus() {
   if (!viewer) {
     backendStatus.textContent = '-';
-    readyStatus.textContent = '-';
     imageStatus.textContent = '-';
+    formatStatus.textContent = '-';
+    zoomStatus.textContent = '-';
+    panStatus.textContent = '-';
+    viewportStatus.textContent = '-';
     return;
   }
 
+  // Backend
   const backend = viewer.getBackend() || 'none';
   backendStatus.textContent = backend;
   backendInfo.textContent = `Backend: ${backend}`;
   
-  readyStatus.textContent = viewer.state.ready ? 'Yes' : 'No';
-  
+  // Image dimensions
   if (viewer.state.imageSize) {
     const [width, height] = viewer.state.imageSize;
-    imageStatus.textContent = `${width}×${height}`;
+    const dimensions = `${formatNumber(width)} × ${formatNumber(height)} px`;
+    const name = currentImageName ? ` (${currentImageName})` : '';
+    imageStatus.textContent = dimensions + name;
   } else {
     imageStatus.textContent = 'None';
+  }
+  
+  // Format
+  formatStatus.textContent = viewer.state.imageFormat?.toUpperCase() || '-';
+  
+  // Zoom
+  const zoom = viewer.viewport.getZoom();
+  zoomStatus.textContent = formatZoom(zoom);
+  
+  // Pan
+  const pan = viewer.viewport.getPan();
+  panStatus.textContent = formatPan(pan);
+  
+  // Viewport size
+  const viewportState = viewer.viewport.getState();
+  if (viewportState.width > 0 && viewportState.height > 0) {
+    viewportStatus.textContent = `${formatNumber(Math.round(viewportState.width))} × ${formatNumber(Math.round(viewportState.height))} px`;
+  } else {
+    viewportStatus.textContent = '-';
   }
 }
 
@@ -120,10 +171,27 @@ async function initViewer() {
 
     viewer.on('viewer:resize', ({ width, height }) => {
       console.log('[Demo] Viewer resized:', { width, height });
+      updateStatus();
     });
 
+    // Listen to viewport changes to update status
+    viewer.viewport.on('viewport:change', () => {
+      updateStatus();
+    });
+
+    // Populate image dropdown
+    await populateImageDropdown();
+
     // Set up control buttons
-    loadImageBtn.addEventListener('click', loadTestImage);
+    imageSelect.addEventListener('change', async (e) => {
+      const selectedPath = e.target.value;
+      if (selectedPath) {
+        await loadSelectedImage(selectedPath);
+      } else {
+        currentImageName = null;
+        updateStatus();
+      }
+    });
     zoomInBtn.addEventListener('click', () => {
       if (viewer) {
         viewer.viewport.zoomIn();
@@ -225,9 +293,33 @@ function getSampleImages() {
 }
 
 /**
- * Load a sample image from the samples directory
+ * Populate the image dropdown with available sample images
  */
-async function loadSampleImage() {
+async function populateImageDropdown() {
+  const sampleImages = getSampleImages();
+  
+  // Clear existing options except the first one
+  imageSelect.innerHTML = '<option value="">Select an image...</option>';
+  
+  // Add a "Generated Test Image" option
+  const generatedOption = document.createElement('option');
+  generatedOption.value = '__generated__';
+  generatedOption.textContent = 'Generated Test Image';
+  imageSelect.appendChild(generatedOption);
+  
+  // Add sample images to dropdown
+  for (const { path, filename } of sampleImages) {
+    const option = document.createElement('option');
+    option.value = path;
+    option.textContent = filename;
+    imageSelect.appendChild(option);
+  }
+}
+
+/**
+ * Load a selected image from the dropdown
+ */
+async function loadSelectedImage(selectedPath) {
   if (!viewer) {
     showError('Viewer not initialized');
     return;
@@ -237,66 +329,61 @@ async function loadSampleImage() {
     showLoading();
     hideError();
 
-    // Get list of available sample images
-    const sampleImages = getSampleImages();
-    
-    if (sampleImages.length === 0) {
-      // No sample images found, fallback to generated test image
-      console.log('[Demo] No sample images found, generating test image');
+    // Handle generated test image option
+    if (selectedPath === '__generated__') {
       await loadGeneratedTestImage();
       return;
     }
 
-    // Try to load the first available image
-    let imageLoaded = false;
+    // Get list of available sample images
+    const sampleImages = getSampleImages();
+    const selectedImage = sampleImages.find(img => img.path === selectedPath);
     
-    for (const { path, filename, importFn } of sampleImages) {
-      try {
-        // Use the import function from glob to get the actual URL
-        const imageUrl = await importFn();
-        const url = typeof imageUrl === 'string' ? imageUrl : imageUrl.default;
-        
-        // Fetch the image
-        const response = await fetch(url);
-        if (!response.ok) continue;
-        
-        const arrayBuffer = await response.arrayBuffer();
-        const format = filename.split('.').pop()?.toLowerCase() || 'png';
-        
-        // Get image dimensions
-        const img = new Image();
-        const blob = new Blob([arrayBuffer]);
-        const objectUrl = URL.createObjectURL(blob);
-        
-        await new Promise((resolve, reject) => {
-          img.onload = () => {
-            URL.revokeObjectURL(objectUrl);
-            resolve(img);
-          };
-          img.onerror = reject;
-          img.src = objectUrl;
-        });
-
-        await viewer.loadImage(arrayBuffer, format, [img.width, img.height]);
-        console.log(`[Demo] Loaded sample image: ${filename}`);
-        imageLoaded = true;
-        break;
-      } catch (err) {
-        console.warn(`[Demo] Failed to load ${filename}:`, err);
-        // Continue to next image
-        continue;
-      }
+    if (!selectedImage) {
+      showError('Selected image not found');
+      return;
     }
 
-    if (!imageLoaded) {
-      // Fallback to generated test image
-      console.log('[Demo] Failed to load any sample images, generating test image');
-      await loadGeneratedTestImage();
+    try {
+      const { path, filename, importFn } = selectedImage;
+      
+      // Use the import function from glob to get the actual URL
+      const imageUrl = await importFn();
+      const url = typeof imageUrl === 'string' ? imageUrl : imageUrl.default;
+      
+      // Fetch the image
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: ${response.statusText}`);
+      }
+      
+      const arrayBuffer = await response.arrayBuffer();
+      const format = filename.split('.').pop()?.toLowerCase() || 'png';
+      
+      // Get image dimensions
+      const img = new Image();
+      const blob = new Blob([arrayBuffer]);
+      const objectUrl = URL.createObjectURL(blob);
+      
+      await new Promise((resolve, reject) => {
+        img.onload = () => {
+          URL.revokeObjectURL(objectUrl);
+          resolve(img);
+        };
+        img.onerror = reject;
+        img.src = objectUrl;
+      });
+
+      await viewer.loadImage(arrayBuffer, format, [img.width, img.height]);
+      currentImageName = filename;
+      console.log(`[Demo] Loaded sample image: ${filename}`);
+    } catch (err) {
+      console.error(`[Demo] Failed to load ${selectedImage.filename}:`, err);
+      showError(`Failed to load image: ${err.message}`);
     }
   } catch (err) {
-    console.error('[Demo] Error loading sample image:', err);
-    // Fallback to generated test image
-    await loadGeneratedTestImage();
+    console.error('[Demo] Error loading selected image:', err);
+    showError(`Error: ${err.message}`);
   }
 }
 
@@ -349,6 +436,7 @@ async function loadGeneratedTestImage() {
       try {
         const arrayBuffer = await blob.arrayBuffer();
         await viewer.loadImage(arrayBuffer, 'png', [testCanvas.width, testCanvas.height]);
+        currentImageName = 'Generated Test Image';
         console.log('[Demo] Generated test image loaded');
       } catch (err) {
         console.error('[Demo] Failed to load test image:', err);
@@ -361,12 +449,6 @@ async function loadGeneratedTestImage() {
   }
 }
 
-/**
- * Load a test image (tries sample images first, then generates one)
- */
-async function loadTestImage() {
-  await loadSampleImage();
-}
 
 // Initialize when DOM is ready
 if (document.readyState === 'loading') {
