@@ -118,6 +118,7 @@ export class Viewer extends EventEmitter<ViewerEvents> {
       // Update state
       this.updateState();
       this.state.initialized = true;
+      this.state.ready = true; // Viewer is ready to render (even without an image)
       
       if (this.options.debug) {
         console.log('[Tessera] Viewer initialized', {
@@ -125,6 +126,9 @@ export class Viewer extends EventEmitter<ViewerEvents> {
           canvas: `${this.canvas.width}x${this.canvas.height}`,
         });
       }
+      
+      // Request initial render to clear the canvas
+      this.requestRender();
       
       this.emit('viewer:ready', { viewer: this });
     } catch (error) {
@@ -146,11 +150,23 @@ export class Viewer extends EventEmitter<ViewerEvents> {
     const rect = this.canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio ?? 1;
     
-    this.canvas.width = rect.width * dpr;
-    this.canvas.height = rect.height * dpr;
+    // Ensure minimum size (fallback if rect is 0)
+    const width = Math.max(rect.width || 800, 1);
+    const height = Math.max(rect.height || 600, 1);
     
-    this.viewport.setSize(rect.width, rect.height);
+    this.canvas.width = width * dpr;
+    this.canvas.height = height * dpr;
+    
+    this.viewport.setSize(width, height);
     this.viewport.setDPR(dpr);
+    
+    if (this.options.debug) {
+      console.log('[Tessera] Canvas setup:', {
+        rect: `${rect.width}x${rect.height}`,
+        canvas: `${this.canvas.width}x${this.canvas.height}`,
+        dpr,
+      });
+    }
   }
 
   /**
@@ -295,8 +311,44 @@ export class Viewer extends EventEmitter<ViewerEvents> {
         this.viewport.setImageSize(size[0], size[1]);
       }
       
-      // TODO: Initialize tile manager with image source
-      // For now, just update state
+      // Initialize tile manager with image source
+      if (source instanceof ArrayBuffer && size) {
+        // Check if this is a TIFF file - browsers don't support TIFF decoding
+        const isTIFF = format === 'tiff' || format === 'tif';
+        
+        if (isTIFF) {
+          // For now, TIFF files cannot be rendered directly
+          // TODO: Implement TIFF decoder or use a library like tiff.js
+          throw new Error(
+            'TIFF files are not yet supported for direct rendering. ' +
+            'The TIFF parser is still under development. ' +
+            'Please try a different format (PNG, JPEG) or wait for full TIFF support.'
+          );
+        }
+        
+        // Use MemoryTileSource for other ArrayBuffer images
+        const { MemoryTileSource } = await import('@tessera/formats');
+        const { TileManager } = await import('@tessera/rendering');
+        
+        const mimeType = format === 'png' 
+          ? 'image/png' 
+          : format === 'jpeg' || format === 'jpg'
+          ? 'image/jpeg'
+          : format === 'webp'
+          ? 'image/webp'
+          : 'image/png';
+        
+        const tileSource = new MemoryTileSource({
+          imageData: source,
+          width: size[0],
+          height: size[1],
+          mimeType,
+        });
+        
+        this.tiles = new TileManager({
+          source: tileSource,
+        });
+      }
       
       this.updateState();
       this.state.ready = true;
@@ -341,14 +393,44 @@ export class Viewer extends EventEmitter<ViewerEvents> {
    * Render the current frame
    */
   private render(): void {
-    if (!this.backend || !this.state.ready) {
+    if (!this.backend) {
       return;
     }
     
+    // Ensure canvas has valid size
+    if (this.canvas.width === 0 || this.canvas.height === 0) {
+      // Retry canvas setup if size is invalid
+      this.setupCanvas();
+      if (this.canvas.width === 0 || this.canvas.height === 0) {
+        return; // Still invalid, skip render
+      }
+    }
+    
+    // Start async rendering
+    this.renderAsync().catch((error) => {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.state.error = err;
+      this.emit('viewer:error', { error: err });
+      
+      if (this.options.debug) {
+        console.error('[Tessera] Render error:', err);
+      }
+    });
+  }
+
+  /**
+   * Async rendering logic
+   */
+  private async renderAsync(): Promise<void> {
     try {
-      // Clear the canvas
+      // Always clear the canvas if backend is initialized
       if (this.backend.clear) {
         this.backend.clear();
+      }
+      
+      // Only render content if viewer is ready
+      if (!this.state.ready) {
+        return;
       }
       
       // Get view uniforms from viewport
@@ -356,9 +438,16 @@ export class Viewer extends EventEmitter<ViewerEvents> {
       
       // Render tiles if available
       if (this.tiles && this.backend.renderTiles) {
-        // TODO: Get visible tiles from tile manager
-        // const visibleTiles = this.tiles.getVisibleTiles(viewUniforms);
-        // this.backend.renderTiles(visibleTiles, viewUniforms);
+        const visibleTiles = await this.tiles.getVisibleTiles(viewUniforms);
+        if (visibleTiles.length > 0) {
+          // Upload tiles to GPU if needed
+          for (const tile of visibleTiles) {
+            if (tile.imageBitmap && this.backend.uploadTile && !tile.texture) {
+              await this.backend.uploadTile(tile);
+            }
+          }
+          this.backend.renderTiles(visibleTiles, viewUniforms);
+        }
       }
       
       // Render annotations if available

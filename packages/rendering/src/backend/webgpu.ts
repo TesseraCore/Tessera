@@ -77,18 +77,23 @@ export class WebGPUBackend extends BaseBackend {
     const commandEncoder = this.device.createCommandEncoder();
     const textureView = this.context.getCurrentTexture().createView();
     
+    // Clear to dark background color (matching page background)
+    // RGB: 0x0a = 10/255 ≈ 0.039
     const renderPassDescriptor: GPURenderPassDescriptor = {
       colorAttachments: [{
         view: textureView,
-        clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        clearValue: { r: 0.039, g: 0.039, b: 0.039, a: 1.0 },
         loadOp: 'clear',
         storeOp: 'store',
       }],
     };
     
-    // TODO: Create render pass and submit
-    // For now, this is a placeholder
-    commandEncoder.finish();
+    const renderPass = commandEncoder.beginRenderPass(renderPassDescriptor);
+    renderPass.end();
+    
+    // Submit the command buffer to actually clear the canvas
+    const commandBuffer = commandEncoder.finish();
+    this.device.queue.submit([commandBuffer]);
   }
 
   renderTiles(tiles: Tile[], view: ViewUniforms): void {

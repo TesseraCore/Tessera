@@ -49,7 +49,9 @@ export class Canvas2DBackend extends BaseBackend {
   clear(): void {
     if (!this.ctx || !this.canvas) return;
     
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    // Fill with dark background color instead of clearing to transparent
+    this.ctx.fillStyle = '#0a0a0a';
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
   renderTiles(tiles: Tile[], view: ViewUniforms): void {

@@ -136,7 +136,22 @@ async function initViewer() {
     showLoading();
     hideError();
 
+    // Ensure canvas element exists
+    if (!canvas) {
+      throw new Error('Canvas element not found');
+    }
+
+    // Wait for next frame to ensure layout is complete
+    await new Promise(resolve => requestAnimationFrame(resolve));
+
     console.log('[Demo] Initializing viewer...');
+    console.log('[Demo] Canvas element:', {
+      width: canvas.width,
+      height: canvas.height,
+      clientWidth: canvas.clientWidth,
+      clientHeight: canvas.clientHeight,
+      boundingRect: canvas.getBoundingClientRect(),
+    });
 
     // Create viewer instance
     viewer = new Viewer({
@@ -269,14 +284,100 @@ async function initViewer() {
 }
 
 /**
+ * Try to read basic TIFF dimensions from ArrayBuffer
+ * This is a minimal implementation that reads the IFD (Image File Directory) header
+ */
+async function getTIFFDimensions(arrayBuffer) {
+  try {
+    const view = new DataView(arrayBuffer);
+    
+    // Check minimum size
+    if (arrayBuffer.byteLength < 8) {
+      return null;
+    }
+    
+    // Read byte order (II = little-endian, MM = big-endian)
+    const byte0 = view.getUint8(0);
+    const byte1 = view.getUint8(1);
+    const isLittleEndian = byte0 === 0x49 && byte1 === 0x49;
+    
+    if (!isLittleEndian && !(byte0 === 0x4d && byte1 === 0x4d)) {
+      return null; // Not a valid TIFF
+    }
+    
+    // Read TIFF magic number (should be 42)
+    const magic = view.getUint16(2, isLittleEndian);
+    if (magic !== 42) {
+      return null;
+    }
+    
+    // Read offset to first IFD
+    const ifdOffset = view.getUint32(4, isLittleEndian);
+    
+    if (ifdOffset < 8 || ifdOffset >= arrayBuffer.byteLength) {
+      return null;
+    }
+    
+    // Read number of directory entries
+    const entryCount = view.getUint16(ifdOffset, isLittleEndian);
+    if (entryCount === 0 || entryCount > 100) {
+      return null; // Sanity check
+    }
+    
+    let width = null;
+    let height = null;
+    
+    // Read directory entries (each is 12 bytes)
+    for (let i = 0; i < entryCount; i++) {
+      const entryOffset = ifdOffset + 2 + (i * 12);
+      if (entryOffset + 12 > arrayBuffer.byteLength) {
+        break;
+      }
+      
+      const tag = view.getUint16(entryOffset, isLittleEndian);
+      const type = view.getUint16(entryOffset + 2, isLittleEndian);
+      const count = view.getUint32(entryOffset + 4, isLittleEndian);
+      
+      // Tag 256 = ImageWidth, Tag 257 = ImageLength (height)
+      if (tag === 256 && type === 3 && count === 1) {
+        // SHORT type, value is in the value field
+        width = view.getUint16(entryOffset + 8, isLittleEndian);
+      } else if (tag === 256 && type === 4 && count === 1) {
+        // LONG type, value is in the value field
+        width = view.getUint32(entryOffset + 8, isLittleEndian);
+      } else if (tag === 257 && type === 3 && count === 1) {
+        // SHORT type
+        height = view.getUint16(entryOffset + 8, isLittleEndian);
+      } else if (tag === 257 && type === 4 && count === 1) {
+        // LONG type
+        height = view.getUint32(entryOffset + 8, isLittleEndian);
+      }
+      
+      if (width && height) {
+        break; // Found both dimensions
+      }
+    }
+    
+    if (width && height && width > 0 && height > 0) {
+      return [width, height];
+    }
+    
+    return null;
+  } catch (err) {
+    console.warn('[Demo] Failed to read TIFF dimensions:', err);
+    return null;
+  }
+}
+
+/**
  * Get list of sample images from the samples folder
  */
 function getSampleImages() {
   // Use Vite's import.meta.glob to get all files from the samples folder
+  // With ?url query, Vite returns a module with default export containing the URL string
   const images = import.meta.glob('/samples/*', { 
     eager: false, 
-    query: '?url',
-    import: 'default'
+    query: '?url'
   });
   
   // Filter out .gitkeep and README.md, then return array of { path, filename, importFn } objects
@@ -348,20 +449,68 @@ async function loadSelectedImage(selectedPath) {
     try {
       const { path, filename, importFn } = selectedImage;
       
+      if (!importFn || typeof importFn !== 'function') {
+        throw new Error(`Invalid import function for ${filename}`);
+      }
+      
       // Use the import function from glob to get the actual URL
+      // With ?url query, Vite returns a module object with default export containing the URL string
+      console.log(`[Demo] Importing image URL for: ${filename} (path: ${path})`);
       const imageUrl = await importFn();
-      const url = typeof imageUrl === 'string' ? imageUrl : imageUrl.default;
+      
+      console.log(`[Demo] Import result for ${filename}:`, imageUrl, typeof imageUrl);
+      
+      // Handle different return types from Vite
+      // With ?url query, Vite returns { default: '/url/to/file' }
+      let url;
+      if (typeof imageUrl === 'string') {
+        url = imageUrl;
+      } else if (imageUrl && typeof imageUrl === 'object') {
+        if ('default' in imageUrl) {
+          url = imageUrl.default;
+        } else {
+          // Try to get the first property value
+          const keys = Object.keys(imageUrl);
+          if (keys.length > 0) {
+            url = imageUrl[keys[0]];
+          }
+        }
+      }
+      
+      if (!url || typeof url !== 'string') {
+        console.error(`[Demo] Invalid URL for ${filename}:`, { imageUrl, url });
+        throw new Error(`Failed to get image URL for ${filename}. Got: ${JSON.stringify(imageUrl)}`);
+      }
+      
+      console.log(`[Demo] Loading image: ${filename} from ${url}`);
       
       // Fetch the image
       const response = await fetch(url);
       if (!response.ok) {
-        throw new Error(`Failed to fetch image: ${response.statusText}`);
+        throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
       }
       
       const arrayBuffer = await response.arrayBuffer();
       const format = filename.split('.').pop()?.toLowerCase() || 'png';
       
-      // Get image dimensions
+      // Handle TIFF files differently (browsers don't support TIFF natively)
+      if (format === 'tiff' || format === 'tif') {
+        // Try to read basic TIFF dimensions from header
+        const dimensions = await getTIFFDimensions(arrayBuffer);
+        if (dimensions) {
+          await viewer.loadImage(arrayBuffer, format, dimensions);
+          currentImageName = filename;
+          console.log(`[Demo] Loaded TIFF image: ${filename} (${dimensions[0]}x${dimensions[1]})`);
+        } else {
+          // Fallback: use placeholder dimensions
+          console.warn(`[Demo] Could not read TIFF dimensions, using placeholder`);
+          await viewer.loadImage(arrayBuffer, format, [2048, 2048]);
+          currentImageName = filename;
+        }
+        return;
+      }
+      
+      // For other formats, use Image API to get dimensions
       const img = new Image();
       const blob = new Blob([arrayBuffer]);
       const objectUrl = URL.createObjectURL(blob);
@@ -371,16 +520,20 @@ async function loadSelectedImage(selectedPath) {
           URL.revokeObjectURL(objectUrl);
           resolve(img);
         };
-        img.onerror = reject;
+        img.onerror = (e) => {
+          URL.revokeObjectURL(objectUrl);
+          reject(new Error(`Failed to load image: ${filename}`));
+        };
         img.src = objectUrl;
       });
 
       await viewer.loadImage(arrayBuffer, format, [img.width, img.height]);
       currentImageName = filename;
-      console.log(`[Demo] Loaded sample image: ${filename}`);
+      console.log(`[Demo] Loaded sample image: ${filename} (${img.width}x${img.height})`);
     } catch (err) {
       console.error(`[Demo] Failed to load ${selectedImage.filename}:`, err);
-      showError(`Failed to load image: ${err.message}`);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      showError(`Failed to load image: ${errorMessage}`);
     }
   } catch (err) {
     console.error('[Demo] Error loading selected image:', err);

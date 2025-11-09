@@ -54,7 +54,9 @@ export class WebGL2Backend extends BaseBackend {
   clear(): void {
     if (!this.gl) return;
     
-    this.gl.clearColor(0, 0, 0, 0);
+    // Clear to dark background color (matching page background)
+    // RGB: 0x0a = 10/255 ≈ 0.039
+    this.gl.clearColor(0.039, 0.039, 0.039, 1.0);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
   }
 
