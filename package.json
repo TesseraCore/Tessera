@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm --filter './packages/**' build",
-    "build:demo": "echo 'Demo build not configured yet'",
+    "demo": "cd demo && pnpm dev",
     "test": "pnpm --filter './packages/**' test",
     "test:coverage": "pnpm --filter './packages/**' test --coverage",
     "lint": "oxlint",
