@@ -53,11 +53,16 @@ export class MemoryTileSource extends BaseTileSource {
       return null;
     }
 
-    // For simplicity, return the entire image as a single tile at level 0
-    // In a full implementation, this would extract the specific tile region
-    if (level !== 0 || x !== 0 || y !== 0) {
+    // For MemoryTileSource, return the entire image as a single tile
+    // This handles the case where the image is small enough to fit in one tile
+    // or when we want to display the full image regardless of tile coordinates
+    // Only return tile at level 0 (other levels would require downscaling)
+    if (level !== 0) {
       return null;
     }
+    
+    // Return the full image for any tile coordinate request at level 0
+    // The renderer will handle clipping to the viewport
 
     // Convert ArrayBuffer to ImageBitmap if needed
     if (!this.imageBitmap) {

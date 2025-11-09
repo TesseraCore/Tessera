@@ -312,42 +312,31 @@ export class Viewer extends EventEmitter<ViewerEvents> {
       }
       
       // Initialize tile manager with image source
-      if (source instanceof ArrayBuffer && size) {
-        // Check if this is a TIFF file - browsers don't support TIFF decoding
-        const isTIFF = format === 'tiff' || format === 'tif';
-        
-        if (isTIFF) {
-          // For now, TIFF files cannot be rendered directly
-          // TODO: Implement TIFF decoder or use a library like tiff.js
-          throw new Error(
-            'TIFF files are not yet supported for direct rendering. ' +
-            'The TIFF parser is still under development. ' +
-            'Please try a different format (PNG, JPEG) or wait for full TIFF support.'
-          );
-        }
-        
-        // Use MemoryTileSource for other ArrayBuffer images
-        const { MemoryTileSource } = await import('@tessera/formats');
+      if (source instanceof ArrayBuffer) {
+        const { createTileSource } = await import('@tessera/formats');
         const { TileManager } = await import('@tessera/rendering');
         
-        const mimeType = format === 'png' 
-          ? 'image/png' 
-          : format === 'jpeg' || format === 'jpg'
-          ? 'image/jpeg'
-          : format === 'webp'
-          ? 'image/webp'
-          : 'image/png';
-        
-        const tileSource = new MemoryTileSource({
-          imageData: source,
-          width: size[0],
-          height: size[1],
-          mimeType,
+        // Use format parser to create tile source
+        // The parser will handle TIFF decoding and other formats
+        const tileSource = await createTileSource(source, {
+          format: format,
         });
+        
+        // Get image size from tile source if not provided
+        if (!size) {
+          const [width, height] = await tileSource.getImageSize();
+          size = [width, height];
+          this.state.imageSize = size;
+          this.viewport.setImageSize(width, height);
+        }
         
         this.tiles = new TileManager({
           source: tileSource,
         });
+        
+        // Wait for tile manager to initialize and preload the first tile
+        // This ensures tiles are available for the first render
+        await this.preloadInitialTiles();
       }
       
       this.updateState();
@@ -447,6 +436,12 @@ export class Viewer extends EventEmitter<ViewerEvents> {
             }
           }
           this.backend.renderTiles(visibleTiles, viewUniforms);
+        } else {
+          // No tiles visible yet - they might be loading
+          // Trigger another render after a short delay to check again
+          setTimeout(() => {
+            this.requestRender();
+          }, 100);
         }
       }
       
@@ -495,6 +490,28 @@ export class Viewer extends EventEmitter<ViewerEvents> {
   resume(): void {
     this.paused = false;
     this.requestRender();
+  }
+
+  /**
+   * Preload initial tiles to ensure they're available for first render
+   */
+  private async preloadInitialTiles(): Promise<void> {
+    if (!this.tiles) return;
+    
+    // Wait for tile manager to initialize (getImageSize completes)
+    let retries = 0;
+    while (!this.tiles.getImageSize() && retries < 50) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      retries++;
+    }
+    
+    // Trigger initial tile load by calling getVisibleTiles
+    // This will queue tiles for loading
+    const viewUniforms = this.viewport.getViewUniforms();
+    await this.tiles.getVisibleTiles(viewUniforms);
+    
+    // Wait a bit for tiles to load
+    await new Promise(resolve => setTimeout(resolve, 50));
   }
 
   /**

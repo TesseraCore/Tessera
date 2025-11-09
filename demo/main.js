@@ -102,8 +102,7 @@ function updateStatus() {
   if (viewer.state.imageSize) {
     const [width, height] = viewer.state.imageSize;
     const dimensions = `${formatNumber(width)} × ${formatNumber(height)} px`;
-    const name = currentImageName ? ` (${currentImageName})` : '';
-    imageStatus.textContent = dimensions + name;
+    imageStatus.textContent = dimensions;
   } else {
     imageStatus.textContent = 'None';
   }
