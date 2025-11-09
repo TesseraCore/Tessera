@@ -15,14 +15,27 @@ import { WebPParser } from './webp/parser.js';
 import { NIfTIParser } from './nifti/parser.js';
 import { NRRDParser } from './nrrd/parser.js';
 import { HDF5Parser } from './hdf5/parser.js';
+import { BIFFParser } from './biff/parser.js';
+import { NDPIParser } from './ndpi/parser.js';
+import { SVSParser } from './svs/parser.js';
+import { SCNParser } from './scn/parser.js';
+import { JPEG2000Parser } from './jpeg2000/parser.js';
+import { JPEGXLParser } from './jpegxl/parser.js';
+import { HEICParser } from './heic/parser.js';
+import { GeoJSONParser } from './geojson/parser.js';
+import { APIParser } from './api/parser.js';
 
 /**
  * Built-in format parsers
  */
 const builtInParsers = new Map<string, FormatParser>([
   ['tiff', new TIFFParser()],
+  ['tif', new TIFFParser()],
+  ['ome-tiff', new TIFFParser()],
+  ['ome.tiff', new TIFFParser()],
   ['zarr', new ZarrParser()],
   ['dicom', new DICOMParser()],
+  ['dcm', new DICOMParser()],
   ['iiif', new IIIFParser()],
   ['jpeg', new JPEGParser()],
   ['jpg', new JPEGParser()],
@@ -32,6 +45,24 @@ const builtInParsers = new Map<string, FormatParser>([
   ['nii', new NIfTIParser()],
   ['nrrd', new NRRDParser()],
   ['hdf5', new HDF5Parser()],
+  ['h5', new HDF5Parser()],
+  ['biff', new BIFFParser()],
+  ['bf', new BIFFParser()],
+  ['ndpi', new NDPIParser()],
+  ['svs', new SVSParser()],
+  ['scn', new SCNParser()],
+  ['jpeg2000', new JPEG2000Parser()],
+  ['jp2', new JPEG2000Parser()],
+  ['jpx', new JPEG2000Parser()],
+  ['j2k', new JPEG2000Parser()],
+  ['j2c', new JPEG2000Parser()],
+  ['jpegxl', new JPEGXLParser()],
+  ['jxl', new JPEGXLParser()],
+  ['heic', new HEICParser()],
+  ['heif', new HEICParser()],
+  ['hif', new HEICParser()],
+  ['geojson', new GeoJSONParser()],
+  // API protocols are handled separately via APIParser
 ]);
 
 /**

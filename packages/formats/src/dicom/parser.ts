@@ -6,7 +6,6 @@ import { BaseFormatParser } from '../base.js';
 import type { FormatConfig, FormatMetadata } from '../types.js';
 import type { TileSource } from '@tessera/rendering';
 import { HTTPTileSource } from '../sources/http-source.js';
-import { MemoryTileSource } from '../sources/memory-source.js';
 
 /**
  * DICOM parser configuration

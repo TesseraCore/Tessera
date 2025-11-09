@@ -28,9 +28,9 @@ export class TIFFParser extends BaseFormatParser {
   readonly metadata: FormatMetadata = {
     id: 'tiff',
     name: 'TIFF/OME-TIFF',
-    description: 'Tagged Image File Format and OME-TIFF',
+    description: 'Tagged Image File Format and OME-TIFF (Open Microscopy Environment TIFF)',
     mimeTypes: ['image/tiff', 'image/tif'],
-    extensions: ['tiff', 'tif'],
+    extensions: ['tiff', 'tif', 'ome.tiff', 'ome.tif'],
     supportsTiling: true,
     supportsPyramids: true,
     supportsMultiChannel: true,
@@ -39,12 +39,22 @@ export class TIFFParser extends BaseFormatParser {
   async canParse(source: string | ArrayBuffer | File): Promise<boolean> {
     if (typeof source === 'string') {
       const url = source.toLowerCase();
-      return url.endsWith('.tiff') || url.endsWith('.tif');
+      return (
+        url.endsWith('.tiff') ||
+        url.endsWith('.tif') ||
+        url.endsWith('.ome.tiff') ||
+        url.endsWith('.ome.tif')
+      );
     }
     
     if (source instanceof File) {
       const name = source.name.toLowerCase();
-      return name.endsWith('.tiff') || name.endsWith('.tif');
+      return (
+        name.endsWith('.tiff') ||
+        name.endsWith('.tif') ||
+        name.endsWith('.ome.tiff') ||
+        name.endsWith('.ome.tif')
+      );
     }
 
     // Check magic bytes: II (little-endian) or MM (big-endian) followed by 42

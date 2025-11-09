@@ -36,7 +36,7 @@ export abstract class BaseFormatParser implements FormatParser {
    */
   protected createTileSourceOptions(
     config?: FormatConfig
-  ): Partial<TileSourceOptions> {
+  ): Partial<import('@tessera/rendering').TileSourceOptions> {
     return {
       tileSize: config?.tileSize ?? 256,
       headers: config?.headers,
