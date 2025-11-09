@@ -4,7 +4,7 @@
  * A simple demo to test the Tessera viewer functionality
  */
 
-import { Viewer } from '../packages/core/src/index.ts';
+import { Viewer } from '@tessera/core';
 
 // Get DOM elements
 const canvas = document.getElementById('canvas');
@@ -201,9 +201,109 @@ async function initViewer() {
 }
 
 /**
- * Load a test image
+ * Get list of sample images from the samples folder
  */
-async function loadTestImage() {
+function getSampleImages() {
+  // Use Vite's import.meta.glob to get all files from the samples folder
+  const images = import.meta.glob('/samples/*', { 
+    eager: false, 
+    as: 'url'
+  });
+  
+  // Filter out .gitkeep and README.md, then return array of { path, filename, importFn } objects
+  return Object.entries(images)
+    .filter(([path]) => {
+      const filename = path.split('/').pop() || '';
+      // Exclude .gitkeep and README.md files
+      return filename !== '.gitkeep' && filename !== 'README.md' && !filename.endsWith('.md');
+    })
+    .map(([path, importFn]) => {
+      // Extract filename from path
+      const filename = path.split('/').pop() || '';
+      return { path, filename, importFn };
+    });
+}
+
+/**
+ * Load a sample image from the samples directory
+ */
+async function loadSampleImage() {
+  if (!viewer) {
+    showError('Viewer not initialized');
+    return;
+  }
+
+  try {
+    showLoading();
+    hideError();
+
+    // Get list of available sample images
+    const sampleImages = getSampleImages();
+    
+    if (sampleImages.length === 0) {
+      // No sample images found, fallback to generated test image
+      console.log('[Demo] No sample images found, generating test image');
+      await loadGeneratedTestImage();
+      return;
+    }
+
+    // Try to load the first available image
+    let imageLoaded = false;
+    
+    for (const { path, filename, importFn } of sampleImages) {
+      try {
+        // Use the import function from glob to get the actual URL
+        const imageUrl = await importFn();
+        const url = typeof imageUrl === 'string' ? imageUrl : imageUrl.default;
+        
+        // Fetch the image
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        
+        const arrayBuffer = await response.arrayBuffer();
+        const format = filename.split('.').pop()?.toLowerCase() || 'png';
+        
+        // Get image dimensions
+        const img = new Image();
+        const blob = new Blob([arrayBuffer]);
+        const objectUrl = URL.createObjectURL(blob);
+        
+        await new Promise((resolve, reject) => {
+          img.onload = () => {
+            URL.revokeObjectURL(objectUrl);
+            resolve(img);
+          };
+          img.onerror = reject;
+          img.src = objectUrl;
+        });
+
+        await viewer.loadImage(arrayBuffer, format, [img.width, img.height]);
+        console.log(`[Demo] Loaded sample image: ${filename}`);
+        imageLoaded = true;
+        break;
+      } catch (err) {
+        console.warn(`[Demo] Failed to load ${filename}:`, err);
+        // Continue to next image
+        continue;
+      }
+    }
+
+    if (!imageLoaded) {
+      // Fallback to generated test image
+      console.log('[Demo] Failed to load any sample images, generating test image');
+      await loadGeneratedTestImage();
+    }
+  } catch (err) {
+    console.error('[Demo] Error loading sample image:', err);
+    // Fallback to generated test image
+    await loadGeneratedTestImage();
+  }
+}
+
+/**
+ * Load a generated test image
+ */
+async function loadGeneratedTestImage() {
   if (!viewer) {
     showError('Viewer not initialized');
     return;
@@ -214,7 +314,6 @@ async function loadTestImage() {
     hideError();
 
     // Create a simple test image using canvas
-    // In a real scenario, you would load an actual image file
     const testCanvas = document.createElement('canvas');
     testCanvas.width = 2048;
     testCanvas.height = 2048;
@@ -250,7 +349,7 @@ async function loadTestImage() {
       try {
         const arrayBuffer = await blob.arrayBuffer();
         await viewer.loadImage(arrayBuffer, 'png', [testCanvas.width, testCanvas.height]);
-        console.log('[Demo] Test image loaded');
+        console.log('[Demo] Generated test image loaded');
       } catch (err) {
         console.error('[Demo] Failed to load test image:', err);
         showError(`Failed to load image: ${err.message}`);
@@ -260,6 +359,13 @@ async function loadTestImage() {
     console.error('[Demo] Error creating test image:', err);
     showError(`Error: ${err.message}`);
   }
+}
+
+/**
+ * Load a test image (tries sample images first, then generates one)
+ */
+async function loadTestImage() {
+  await loadSampleImage();
 }
 
 // Initialize when DOM is ready

@@ -36,10 +36,14 @@ The demo will be available at `http://localhost:3000` and should open automatica
 The demo includes:
 
 - **Viewer Initialization**: Tests the basic viewer setup with WebGPU/WebGL/Canvas2D fallback
-- **Test Image Loading**: Creates and loads a test checkerboard image
+- **Test Image Loading**: Automatically loads images from the `samples/` folder, or generates a test checkerboard image
 - **Pan & Zoom**: Mouse drag to pan, mouse wheel to zoom
 - **Controls**: Buttons for zoom in/out and reset view
 - **Status Display**: Shows current backend, ready state, and image dimensions
+
+## Sample Images
+
+Place test images in the `demo/samples/` folder. The demo will automatically discover and load any files you place there. All files in this directory are gitignored.
 
 ## Browser Support
 

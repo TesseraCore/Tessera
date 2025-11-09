@@ -31,8 +31,9 @@
   "author": "Adrian Darian",
   "license": "MIT with Commercial Attribution Requirement",
   "devDependencies": {
-    "@types/node": "catalog:",
     "@lhci/cli": "catalog:",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "rolldown": "catalog:",
@@ -40,8 +41,7 @@
     "size-limit": "catalog:",
     "taze": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "@vitest/coverage-v8": "catalog:"
+    "vitest": "catalog:"
   },
   "engines": {
     "node": ">=18.0.0",

@@ -1,0 +1,28 @@
+# Samples Directory
+
+Place test images here for local development. All files in this directory are gitignored.
+
+## Usage
+
+The demo application will automatically try to load images from this directory when you click "Load Test Image". 
+If no sample images are found, it will generate a test checkerboard pattern instead.
+
+## Supported Formats
+
+You can use any image format supported by Tessera:
+- PNG, JPEG, WebP (standard formats)
+- TIFF (with pyramid support)
+- DICOM (medical imaging)
+- IIIF manifests
+- Zarr arrays
+
+## Image Names
+
+The demo will automatically discover all files in this directory (except .gitkeep).
+
+## Example Sources
+
+- **Test Images**: Use any sample images from your test suite
+- **Medical Images**: DICOM samples from public datasets
+- **Large Images**: Deep zoom test images (e.g., from OpenSeadragon examples)
+

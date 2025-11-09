@@ -46,3 +46,8 @@ dependency-report.md
 packages/*/dist/bundle.js
 packages/*/dist/bundle-stats.html
 packages/*/coverage/
+
+# Demo sample images (gitignored but directory structure kept)
+demo/samples/*
+!demo/samples/.gitkeep
+!demo/samples/README.md
