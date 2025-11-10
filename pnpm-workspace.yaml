@@ -27,4 +27,4 @@ catalog:
   taze: ^0.10.0
   
   # CI/CD
-  "@lhci/cli": ^0.12.0
+  "@lhci/cli": ^0.15.1
