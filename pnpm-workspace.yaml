@@ -24,7 +24,7 @@ catalog:
   oxlint: latest
   
   # Dependency management
-  taze: ^0.10.0
+  taze: ^19.9.0
   
   # CI/CD
   "@lhci/cli": ^0.12.0
