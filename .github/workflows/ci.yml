@@ -162,7 +162,7 @@ jobs:
           fail-below-threshold: ${{ github.event_name == 'pull_request' }}
 
       - name: Upload coverage reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: coverage-reports${{ github.event_name == 'schedule' && '-weekly' || '' }}
@@ -195,7 +195,7 @@ jobs:
         run: pnpm build
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: build-artifacts${{ github.event_name == 'schedule' && '-weekly' || '' }}
           path: packages/*/dist
@@ -230,7 +230,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload bundle report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: bundle-report${{ github.event_name == 'schedule' && '-weekly' || '' }}
@@ -273,7 +273,7 @@ jobs:
         continue-on-error: ${{ github.event_name == 'pull_request' }}
 
       - name: Upload Lighthouse report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: lighthouse-report${{ github.event_name == 'schedule' && '-weekly' || '' }}
@@ -337,7 +337,7 @@ jobs:
 
       - name: Upload dependency report
         if: github.event_name == 'schedule'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: dependency-report-weekly
           path: dependency-report.md
