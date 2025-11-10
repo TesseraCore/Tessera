@@ -90,6 +90,8 @@ export { HTTPTileSource } from './sources/http-source.js';
 export type { HTTPTileSourceOptions } from './sources/http-source.js';
 export { MemoryTileSource } from './sources/memory-source.js';
 export type { MemoryTileSourceOptions } from './sources/memory-source.js';
+export { TIFFTileSource } from './sources/tiff-source.js';
+export type { TIFFTileSourceOptions } from './sources/tiff-source.js';
 
 // API protocol tile sources
 export * from './api/index.js';

@@ -261,6 +261,8 @@ async function initViewer() {
     });
 
     // Set up wheel zoom
+    // Note: We use { passive: false } because we need to call preventDefault()
+    // to prevent page scrolling while zooming the image
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       if (viewer) {
@@ -271,7 +273,7 @@ async function initViewer() {
         const delta = e.deltaY > 0 ? 0.9 : 1.1;
         viewer.viewport.zoomBy(delta, center);
       }
-    });
+    }, { passive: false });
 
     // Initial status update
     updateStatus();
@@ -402,12 +404,6 @@ async function populateImageDropdown() {
   // Clear existing options except the first one
   imageSelect.innerHTML = '<option value="">Select an image...</option>';
   
-  // Add a "Generated Test Image" option
-  const generatedOption = document.createElement('option');
-  generatedOption.value = '__generated__';
-  generatedOption.textContent = 'Generated Test Image';
-  imageSelect.appendChild(generatedOption);
-  
   // Add sample images to dropdown
   for (const { path, filename } of sampleImages) {
     const option = document.createElement('option');
@@ -429,12 +425,6 @@ async function loadSelectedImage(selectedPath) {
   try {
     showLoading();
     hideError();
-
-    // Handle generated test image option
-    if (selectedPath === '__generated__') {
-      await loadGeneratedTestImage();
-      return;
-    }
 
     // Get list of available sample images
     const sampleImages = getSampleImages();
@@ -492,18 +482,25 @@ async function loadSelectedImage(selectedPath) {
       const arrayBuffer = await response.arrayBuffer();
       const format = filename.split('.').pop()?.toLowerCase() || 'png';
       
+      // Validate array buffer
+      if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+        throw new Error(`Failed to load image: Empty or invalid file data (${arrayBuffer?.byteLength ?? 0} bytes)`);
+      }
+      
+      console.log(`[Demo] Loaded ${filename}: ${arrayBuffer.byteLength} bytes, format: ${format}`);
+      
       // Handle TIFF files differently (browsers don't support TIFF natively)
       if (format === 'tiff' || format === 'tif') {
-        // Try to read basic TIFF dimensions from header
+        // Try to read basic TIFF dimensions from header (optional optimization)
+        // The parser can handle TIFF files without pre-reading dimensions
         const dimensions = await getTIFFDimensions(arrayBuffer);
         if (dimensions) {
           await viewer.loadImage(arrayBuffer, format, dimensions);
           currentImageName = filename;
           console.log(`[Demo] Loaded TIFF image: ${filename} (${dimensions[0]}x${dimensions[1]})`);
         } else {
-          // Fallback: use placeholder dimensions
-          console.warn(`[Demo] Could not read TIFF dimensions, using placeholder`);
-          await viewer.loadImage(arrayBuffer, format, [2048, 2048]);
+          // Parser will read dimensions from the TIFF file itself
+          await viewer.loadImage(arrayBuffer, format);
           currentImageName = filename;
         }
         return;

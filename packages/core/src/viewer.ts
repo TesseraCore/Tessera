@@ -320,14 +320,21 @@ export class Viewer extends EventEmitter<ViewerEvents> {
         // The parser will handle TIFF decoding and other formats
         const tileSource = await createTileSource(source, {
           format: format,
+          config: size ? { dimensions: size } : undefined,
         });
         
-        // Get image size from tile source if not provided
-        if (!size) {
-          const [width, height] = await tileSource.getImageSize();
-          size = [width, height];
+        // Always get image size from tile source to ensure accuracy
+        // The tile source knows the actual dimensions, which may differ from provided size
+        const [actualWidth, actualHeight] = await tileSource.getImageSize();
+        
+        // Update if dimensions differ from provided size
+        if (!size || size[0] !== actualWidth || size[1] !== actualHeight) {
+          if (size && (size[0] !== actualWidth || size[1] !== actualHeight)) {
+            console.log(`[Viewer] Updating image dimensions from ${size[0]}x${size[1]} to ${actualWidth}x${actualHeight}`);
+          }
+          size = [actualWidth, actualHeight];
           this.state.imageSize = size;
-          this.viewport.setImageSize(width, height);
+          this.viewport.setImageSize(actualWidth, actualHeight);
         }
         
         this.tiles = new TileManager({
@@ -412,14 +419,15 @@ export class Viewer extends EventEmitter<ViewerEvents> {
    */
   private async renderAsync(): Promise<void> {
     try {
-      // Always clear the canvas if backend is initialized
-      if (this.backend.clear) {
-        this.backend.clear();
-      }
-      
       // Only render content if viewer is ready
       if (!this.state.ready) {
         return;
+      }
+      
+      // Clear AFTER checking ready, but before rendering
+      // This ensures we don't clear if there's nothing to render
+      if (this.backend.clear) {
+        this.backend.clear();
       }
       
       // Get view uniforms from viewport
@@ -428,6 +436,33 @@ export class Viewer extends EventEmitter<ViewerEvents> {
       // Render tiles if available
       if (this.tiles && this.backend.renderTiles) {
         const visibleTiles = await this.tiles.getVisibleTiles(viewUniforms);
+        if (this.options.debug) {
+          console.log(`[Viewer] Found ${visibleTiles.length} visible tiles`);
+          if (visibleTiles.length > 0) {
+            const firstTile = visibleTiles[0];
+            console.log(`[Viewer] First tile:`, {
+              level: firstTile.level,
+              x: firstTile.x,
+              y: firstTile.y,
+              width: firstTile.width,
+              height: firstTile.height,
+              imageX: firstTile.imageX,
+              imageY: firstTile.imageY,
+              hasBitmap: !!firstTile.imageBitmap,
+              bitmapWidth: firstTile.imageBitmap?.width,
+              bitmapHeight: firstTile.imageBitmap?.height,
+              loaded: firstTile.loaded,
+            });
+            
+            // Check all tiles for bitmaps
+            const tilesWithBitmaps = visibleTiles.filter(t => t.imageBitmap).length;
+            console.log(`[Viewer] Tiles with bitmaps: ${tilesWithBitmaps}/${visibleTiles.length}`);
+            
+            if (tilesWithBitmaps === 0) {
+              console.warn('[Viewer] WARNING: No tiles have imageBitmaps!');
+            }
+          }
+        }
         if (visibleTiles.length > 0) {
           // Upload tiles to GPU if needed
           for (const tile of visibleTiles) {
@@ -435,10 +470,26 @@ export class Viewer extends EventEmitter<ViewerEvents> {
               await this.backend.uploadTile(tile);
             }
           }
-          this.backend.renderTiles(visibleTiles, viewUniforms);
+          if (this.backend.renderTiles) {
+            console.log(`[Viewer] Calling renderTiles with ${visibleTiles.length} tiles`);
+            try {
+              const result = this.backend.renderTiles(visibleTiles, viewUniforms);
+              if (result instanceof Promise) {
+                await result;
+              }
+              console.log('[Viewer] renderTiles completed');
+            } catch (renderError) {
+              console.error('[Viewer] Error in renderTiles:', renderError);
+            }
+          } else {
+            console.warn('[Viewer] Backend does not have renderTiles method');
+          }
         } else {
           // No tiles visible yet - they might be loading
           // Trigger another render after a short delay to check again
+          if (this.options.debug) {
+            console.log('[Viewer] No visible tiles found, retrying...');
+          }
           setTimeout(() => {
             this.requestRender();
           }, 100);

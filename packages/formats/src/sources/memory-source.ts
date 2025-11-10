@@ -104,16 +104,44 @@ export class MemoryTileSource extends BaseTileSource {
           throw error;
         }
       } else if (this.imageData instanceof ImageData) {
-        // Convert ImageData to ImageBitmap
+        // Convert ImageData to ImageBitmap using a regular canvas instead of OffscreenCanvas
+        // This ensures the ImageBitmap can be drawn to regular canvas contexts
         try {
-          const canvas = new OffscreenCanvas(this.imageData.width, this.imageData.height);
+          // Verify ImageData has content
+          const hasContent = this.imageData.data.some((val, idx) => idx % 4 !== 3 && val > 0);
+          if (!hasContent) {
+            console.warn('[MemoryTileSource] ImageData appears to be empty');
+          }
+          
+          // Use a regular HTMLCanvasElement instead of OffscreenCanvas
+          // This creates an ImageBitmap that can be drawn to regular canvas contexts
+          const canvas = document.createElement('canvas');
+          canvas.width = this.imageData.width;
+          canvas.height = this.imageData.height;
           const ctx = canvas.getContext('2d');
           if (ctx) {
+            // Put ImageData directly to canvas
             ctx.putImageData(this.imageData, 0, 0);
+            
+            // Verify the canvas has content
+            const verifyData = ctx.getImageData(0, 0, Math.min(10, canvas.width), Math.min(10, canvas.height));
+            const verifyHasContent = verifyData.data.some((val, idx) => idx % 4 !== 3 && val > 0);
+            if (!verifyHasContent) {
+              console.warn('[MemoryTileSource] Canvas has no content after putImageData');
+            }
+            
+            // Create ImageBitmap from canvas
             this.imageBitmap = await createImageBitmap(canvas);
+            
+            // Verify ImageBitmap was created successfully
+            if (!this.imageBitmap || this.imageBitmap.width === 0 || this.imageBitmap.height === 0) {
+              throw new Error('Failed to create valid ImageBitmap');
+            }
+            
+            console.log(`[MemoryTileSource] Created ImageBitmap: ${this.imageBitmap.width}x${this.imageBitmap.height}`);
           }
         } catch (error) {
-          console.error('Failed to create ImageBitmap from ImageData:', error);
+          console.error('[MemoryTileSource] Failed to create ImageBitmap from ImageData:', error);
           return null;
         }
       }
@@ -123,14 +151,19 @@ export class MemoryTileSource extends BaseTileSource {
       return null;
     }
 
+    // For MemoryTileSource, return the full image for any tile coordinate request
+    // The renderer uses imageX/imageY to position tiles, so all tiles will be drawn
+    // at (0,0) which is correct for a single-image source
+    // The tile manager may request multiple tiles based on grid calculations,
+    // but they'll all render the same full image at the correct position
     return {
       level: 0,
-      x: 0,
-      y: 0,
+      x,
+      y,
       width: this.width,
       height: this.height,
-      imageX: 0,
-      imageY: 0,
+      imageX: 0,  // Always at top-left of image
+      imageY: 0,  // Always at top-left of image
       imageBitmap: this.imageBitmap,
       loaded: true,
       visible: false,
