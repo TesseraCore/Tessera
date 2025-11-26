@@ -621,4 +621,3 @@ if (document.readyState === 'loading') {
 } else {
   initViewer();
 }
-
