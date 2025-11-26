@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite"
   },
+  "dependencies": {
+    "@tessera/devtools": "workspace:*"
+  },
   "devDependencies": {
     "vite": "^5.4.0"
   }

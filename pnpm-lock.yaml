@@ -79,6 +79,10 @@ importers:
         version: 1.6.1(@types/node@20.19.24)
 
   demo:
+    dependencies:
+      '@tessera/devtools':
+        specifier: workspace:*
+        version: link:../packages/devtools
     devDependencies:
       vite:
         specifier: ^5.4.0
@@ -151,6 +155,16 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 1.6.1(@types/node@20.19.24)
+
+  packages/devtools:
+    dependencies:
+      tessera:
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
 
   packages/events:
     devDependencies:

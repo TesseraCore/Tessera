@@ -12,6 +12,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      'tessera': resolve(__dirname, '../packages/core/src'),
       '@tessera/core': resolve(__dirname, '../packages/core/src'),
       '@tessera/rendering': resolve(__dirname, '../packages/rendering/src'),
       '@tessera/annotations': resolve(__dirname, '../packages/annotations/src'),
@@ -26,6 +27,7 @@ export default defineConfig({
       '@tessera/import': resolve(__dirname, '../packages/import/src'),
       '@tessera/export': resolve(__dirname, '../packages/export/src'),
       '@tessera/workers': resolve(__dirname, '../packages/workers/src'),
+      '@tessera/devtools': resolve(__dirname, '../packages/devtools/src'),
     },
     extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json'],
   },
@@ -53,6 +55,7 @@ export default defineConfig({
           
           // Handle @tessera/* imports
           const packageAliases = {
+            'tessera': resolve(__dirname, '../packages/core/src'),
             '@tessera/core': resolve(__dirname, '../packages/core/src'),
             '@tessera/rendering': resolve(__dirname, '../packages/rendering/src'),
             '@tessera/annotations': resolve(__dirname, '../packages/annotations/src'),
@@ -67,6 +70,7 @@ export default defineConfig({
             '@tessera/import': resolve(__dirname, '../packages/import/src'),
             '@tessera/export': resolve(__dirname, '../packages/export/src'),
             '@tessera/workers': resolve(__dirname, '../packages/workers/src'),
+            '@tessera/devtools': resolve(__dirname, '../packages/devtools/src'),
           };
           
           for (const [alias, aliasPath] of Object.entries(packageAliases)) {

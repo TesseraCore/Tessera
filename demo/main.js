@@ -5,6 +5,7 @@
  */
 
 import { Viewer } from '@tessera/core';
+import { DevTools } from '@tessera/devtools';
 
 // Get DOM elements
 const canvas = document.getElementById('canvas');
@@ -25,6 +26,7 @@ const error = document.getElementById('error');
 let currentImageName = null;
 
 let viewer = null;
+let devtools = null;
 
 /**
  * Show error message
@@ -158,6 +160,19 @@ async function initViewer() {
       preferredBackend: 'webgpu',
       debug: true,
     });
+
+    // Attach DevTools for debugging
+    devtools = new DevTools(viewer, {
+      position: 'right',
+      defaultPanel: 'state',
+      hotkey: 'F12',
+      showToggleButton: true,
+      startOpen: false,
+    });
+    
+    // Expose to window for debugging in console
+    window.viewer = viewer;
+    window.devtools = devtools;
 
     // Set up event listeners
     viewer.on('viewer:ready', () => {
