@@ -520,9 +520,27 @@ export class Viewer extends EventEmitter<ViewerEvents> {
               this.requestRender();
             }, 16);
           }
+        } else {
+          // No visible tiles yet - check if there's active loading or pending init
+          // This handles initial load when tiles are queued but not yet in cache
+          const loadingCount = this.tiles.getLoadingCount();
+          const queueLength = this.tiles.getQueueLength();
+          const imageSize = this.tiles.getImageSize();
+          
+          if (loadingCount > 0 || queueLength > 0) {
+            // Active loading in progress
+            setTimeout(() => {
+              this.requestRender();
+            }, 50); // Slower polling when nothing visible yet
+          } else if (!imageSize) {
+            // TileManager hasn't initialized yet - keep polling until it does
+            setTimeout(() => {
+              this.requestRender();
+            }, 50);
+          }
+          // If TileManager is initialized but nothing is loading, don't poll
+          // (e.g., image fully loaded or no tiles needed for current view)
         }
-        // Removed: unconditional polling when no tiles visible
-        // This was causing CPU drain even when no image was loaded
       }
       
       // Render annotations if available
