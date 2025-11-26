@@ -239,19 +239,49 @@
       color: #a0a0a0;
     }
 
-    .spinner {
-      border: 3px solid #3a3a3a;
-      border-top: 3px solid #00ff88;
-      border-radius: 50%;
-      width: 40px;
-      height: 40px;
-      animation: spin 1s linear infinite;
-      margin: 0 auto 1rem;
+    .loading-dots {
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+      gap: 6px;
+      height: 32px;
+      margin-bottom: 1rem;
     }
 
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
+    .loading-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #00ff88;
+      animation: wave 1.2s ease-in-out infinite;
+      box-shadow: 0 0 12px rgba(0, 255, 136, 0.5);
+    }
+
+    .loading-dot:nth-child(1) {
+      animation-delay: 0s;
+    }
+
+    .loading-dot:nth-child(2) {
+      animation-delay: 0.1s;
+    }
+
+    .loading-dot:nth-child(3) {
+      animation-delay: 0.2s;
+    }
+
+    .loading-dot:nth-child(4) {
+      animation-delay: 0.3s;
+    }
+
+    @keyframes wave {
+      0%, 60%, 100% {
+        transform: translateY(0);
+        opacity: 0.4;
+      }
+      30% {
+        transform: translateY(-18px);
+        opacity: 1;
+      }
     }
   </style>
 </head>
@@ -317,7 +347,12 @@
       </div>
     </div>
     <div class="loading" id="loading" style="display: none;">
-      <div class="spinner"></div>
+      <div class="loading-dots">
+        <div class="loading-dot"></div>
+        <div class="loading-dot"></div>
+        <div class="loading-dot"></div>
+        <div class="loading-dot"></div>
+      </div>
       <div>Loading...</div>
     </div>
     <div class="error" id="error" style="display: none;"></div>
