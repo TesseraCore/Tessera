@@ -4,7 +4,7 @@
  * A simple demo to test the Tessera viewer functionality
  */
 
-import { Viewer } from '@tessera/core';
+import { Viewer } from 'tessera';
 import { DevTools } from '@tessera/devtools';
 
 // Get DOM elements
