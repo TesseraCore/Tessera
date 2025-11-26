@@ -205,9 +205,11 @@ export class DevTools {
     this.createToggleButton();
     this.createPanel();
     this.setupEventListeners();
-    this.startPerformanceMonitoring();
     
+    // Only start performance monitoring if panel starts open
+    // This prevents CPU drain when DevTools is closed
     if (this.options.startOpen) {
+      this.startPerformanceMonitoring();
       this.open();
     }
   }
@@ -865,6 +867,22 @@ export class DevTools {
         this.checkPerformanceAlerts();
       }
     }, 200);
+  }
+
+  /**
+   * Stop performance monitoring loop
+   * Called when DevTools is closed to prevent CPU drain
+   */
+  private stopPerformanceMonitoring(): void {
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    
+    if (this.updateIntervalId !== null) {
+      clearInterval(this.updateIntervalId);
+      this.updateIntervalId = null;
+    }
   }
 
   /**
@@ -2062,6 +2080,13 @@ export class DevTools {
   open(): void {
     this.isOpen = true;
     this.root?.classList.remove('dt-hidden');
+    
+    // Start performance monitoring when panel opens
+    // Only start if not already running
+    if (this.rafId === null) {
+      this.startPerformanceMonitoring();
+    }
+    
     this.updateActivePanel();
     
     // Hide toggle button when panel is open
@@ -2076,6 +2101,9 @@ export class DevTools {
   close(): void {
     this.isOpen = false;
     this.root?.classList.add('dt-hidden');
+    
+    // Stop performance monitoring when panel closes to save CPU
+    this.stopPerformanceMonitoring();
     
     // Show toggle button when panel is closed
     if (this.toggleButton) {

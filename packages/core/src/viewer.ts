@@ -499,22 +499,30 @@ export class Viewer extends EventEmitter<ViewerEvents> {
           
           // If there are tiles still loading, schedule another render
           if (readyTiles.length < visibleTiles.length) {
-            setTimeout(() => {
-              this.requestRender();
-            }, 16); // ~60fps
+            // Check if there's actually loading in progress
+            const loadingCount = this.tiles.getLoadingCount();
+            const queueLength = this.tiles.getQueueLength();
+            
+            if (loadingCount > 0 || queueLength > 0) {
+              setTimeout(() => {
+                this.requestRender();
+              }, 16); // ~60fps while loading
+            }
+            // If nothing is loading, the tiles might have failed - don't spin
           }
         } else if (visibleTiles.length > 0) {
-          // Tiles requested but not ready yet - check again soon
-          setTimeout(() => {
-            this.requestRender();
-          }, 16);
-        } else {
-          // No tiles visible yet - they might be loading
-          // Trigger another render after a short delay to check again
-          setTimeout(() => {
-            this.requestRender();
-          }, 100);
+          // Tiles requested but not ready yet - only check if actively loading
+          const loadingCount = this.tiles.getLoadingCount();
+          const queueLength = this.tiles.getQueueLength();
+          
+          if (loadingCount > 0 || queueLength > 0) {
+            setTimeout(() => {
+              this.requestRender();
+            }, 16);
+          }
         }
+        // Removed: unconditional polling when no tiles visible
+        // This was causing CPU drain even when no image was loaded
       }
       
       // Render annotations if available
