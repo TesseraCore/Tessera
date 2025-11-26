@@ -281,6 +281,10 @@ export class Viewport extends EventEmitter<ViewportEvents> {
 
   /**
    * Fit image to viewport
+   * 
+   * Adjusts zoom so the entire image fits within the viewport,
+   * and centers the image. The image will be fully visible with
+   * letterboxing/pillarboxing if aspect ratios don't match.
    */
   fitToView(): void {
     if (!this.state.imageSize) return;
@@ -288,21 +292,24 @@ export class Viewport extends EventEmitter<ViewportEvents> {
     const [imgWidth, imgHeight] = this.state.imageSize;
     const [vpWidth, vpHeight] = [this.state.width, this.state.height];
     
-    if (vpWidth === 0 || vpHeight === 0) return;
+    if (vpWidth === 0 || vpHeight === 0 || imgWidth === 0 || imgHeight === 0) return;
     
+    // Calculate zoom to fit entire image in viewport
     const scaleX = vpWidth / imgWidth;
     const scaleY = vpHeight / imgHeight;
     const scale = Math.min(scaleX, scaleY);
     
-    this.setZoom(scale);
+    // Set zoom (bypassing setZoom to avoid emitting multiple events)
+    this.state.zoom = Math.max(this.options.minZoom, Math.min(this.options.maxZoom, scale));
     
-    // Center the image
-    const scaledWidth = imgWidth * scale;
-    const scaledHeight = imgHeight * scale;
-    const panX = (vpWidth - scaledWidth) / 2 / scale;
-    const panY = (vpHeight - scaledHeight) / 2 / scale;
+    // Center the image - pan [0, 0] centers because updateViewMatrix 
+    // already translates by -imgWidth/2, -imgHeight/2
+    this.state.pan = [0, 0];
     
-    this.setPan([-panX, -panY]);
+    this.updateViewMatrix();
+    this.emit('viewport:zoom', { zoom: this.state.zoom, center: [0, 0] });
+    this.emit('viewport:pan', { pan: this.getPan() });
+    this.emit('viewport:change', this.getState());
   }
 
   /**

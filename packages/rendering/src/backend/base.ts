@@ -24,19 +24,19 @@ export abstract class BaseBackend implements RenderBackend {
     // Default implementation - subclasses should override
   }
 
-  renderTiles?(tiles: Tile[], view: ViewUniforms): void {
+  renderTiles?(_tiles: Tile[], _view: ViewUniforms): void {
     // Default implementation - subclasses should override
   }
 
-  renderAnnotations?(batch: AnnotationBatch, view: ViewUniforms): void {
+  renderAnnotations?(_batch: AnnotationBatch, _view: ViewUniforms): void {
     // Default implementation - subclasses should override
   }
 
-  renderOverlays?(overlays: Overlay[], view: ViewUniforms): void {
+  renderOverlays?(_overlays: Overlay[], _view: ViewUniforms): void {
     // Default implementation - subclasses should override
   }
 
-  uploadTile?(tile: Tile): Promise<void> {
+  uploadTile?(_tile: Tile): Promise<void> {
     // Default implementation - subclasses should override
     return Promise.resolve();
   }

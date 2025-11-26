@@ -23,7 +23,8 @@ import { JPEG2000Parser } from './jpeg2000/parser.js';
 import { JPEGXLParser } from './jpegxl/parser.js';
 import { HEICParser } from './heic/parser.js';
 import { GeoJSONParser } from './geojson/parser.js';
-import { APIParser } from './api/parser.js';
+// Note: APIParser is available for custom API-based tile sources but not registered by default
+// import { APIParser } from './api/parser.js';
 
 /**
  * Built-in format parsers

@@ -2,7 +2,7 @@
  * Intersection boolean operation
  */
 
-export function intersect(polygon1: unknown, polygon2: unknown) {
+export function intersect(_polygon1: unknown, _polygon2: unknown) {
   // TODO: Implement intersection operation
 }
 

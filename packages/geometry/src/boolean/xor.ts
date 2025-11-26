@@ -2,7 +2,7 @@
  * XOR boolean operation
  */
 
-export function xor(polygon1: unknown, polygon2: unknown) {
+export function xor(_polygon1: unknown, _polygon2: unknown) {
   // TODO: Implement XOR operation
 }
 

@@ -65,8 +65,8 @@ export class GeoJSONParser extends BaseFormatParser {
   }
 
   async parse(
-    source: string | ArrayBuffer | File,
-    config?: GeoJSONConfig
+    _source: string | ArrayBuffer | File,
+    _config?: GeoJSONConfig
   ): Promise<TileSource> {
     // GeoJSON is not a tile source format
     // This is a placeholder that throws an informative error

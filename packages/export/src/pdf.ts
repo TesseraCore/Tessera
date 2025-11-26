@@ -2,7 +2,7 @@
  * PDF exporter
  */
 
-export function exportPDF(annotations: unknown[]) {
+export function exportPDF(_annotations: unknown[]) {
   // TODO: Implement PDF export
 }
 

@@ -2,7 +2,7 @@
  * Color utilities
  */
 
-export function hexToRgb(hex: string) {
+export function hexToRgb(_hex: string) {
   // TODO: Implement hex to RGB conversion
 }
 

@@ -1,5 +1,11 @@
 /**
  * Tile cache implementation with LRU eviction
+ * 
+ * Features:
+ * - LRU (Least Recently Used) eviction
+ * - Memory limits (CPU and GPU)
+ * - Level-aware caching for pyramid support
+ * - Visibility tracking
  */
 
 import type { Tile } from '../backend/types.js';
@@ -20,6 +26,8 @@ export interface CacheStats {
   misses: number;
   /** Hit rate (0-1) */
   hitRate: number;
+  /** Number of tiles per level */
+  tilesPerLevel: Map<number, number>;
 }
 
 /**
@@ -32,10 +40,12 @@ export interface CacheOptions {
   maxGPUBytes?: number;
   /** Maximum number of tiles (default: unlimited) */
   maxTiles?: number;
+  /** Preferred levels to keep in cache (e.g., [0, 1] keeps high-res) */
+  preferredLevels?: number[];
 }
 
 /**
- * Tile cache with LRU eviction
+ * Tile cache with LRU eviction and level awareness
  */
 export class TileCache {
   private tiles = new Map<string, Tile>();
@@ -44,6 +54,9 @@ export class TileCache {
   private hits = 0;
   private misses = 0;
   
+  // Index by level for faster level-based lookups
+  private tilesByLevel = new Map<number, Set<string>>();
+  
   private options: Required<CacheOptions>;
 
   constructor(options: CacheOptions = {}) {
@@ -51,6 +64,7 @@ export class TileCache {
       maxCPUBytes: options.maxCPUBytes ?? 512 * 1024 * 1024, // 512 MB
       maxGPUBytes: options.maxGPUBytes ?? 1024 * 1024 * 1024, // 1 GB
       maxTiles: options.maxTiles ?? Infinity,
+      preferredLevels: options.preferredLevels ?? [],
     };
   }
 
@@ -79,6 +93,13 @@ export class TileCache {
   }
 
   /**
+   * Check if a tile exists in cache
+   */
+  has(level: number, x: number, y: number): boolean {
+    return this.tiles.has(this.getKey(level, x, y));
+  }
+
+  /**
    * Add a tile to cache
    */
   set(tile: Tile): void {
@@ -87,7 +108,7 @@ export class TileCache {
     // Remove existing tile if present
     const existing = this.tiles.get(key);
     if (existing) {
-      this.remove(existing);
+      this.removeInternal(key, existing);
     }
     
     // Check if we need to evict
@@ -97,6 +118,12 @@ export class TileCache {
     tile.lastAccess = Date.now();
     this.tiles.set(key, tile);
     
+    // Update level index
+    if (!this.tilesByLevel.has(tile.level)) {
+      this.tilesByLevel.set(tile.level, new Set());
+    }
+    this.tilesByLevel.get(tile.level)!.add(key);
+    
     // Track memory (estimate)
     if (tile.imageBitmap) {
       const bytes = tile.width * tile.height * 4; // RGBA
@@ -104,8 +131,7 @@ export class TileCache {
     }
     
     if (tile.texture) {
-      // GPU memory is tracked by backend
-      // This is just a placeholder
+      // GPU memory tracking placeholder
     }
   }
 
@@ -114,17 +140,39 @@ export class TileCache {
    */
   remove(tile: Tile): void {
     const key = this.getKey(tile.level, tile.x, tile.y);
-    const existing = this.tiles.get(key);
+    this.removeByKey(key);
+  }
+
+  /**
+   * Remove a tile by key
+   */
+  private removeByKey(key: string): void {
+    const tile = this.tiles.get(key);
+    if (tile) {
+      this.removeInternal(key, tile);
+    }
+  }
+
+  /**
+   * Internal remove implementation
+   */
+  private removeInternal(key: string, tile: Tile): void {
+    this.tiles.delete(key);
     
-    if (existing) {
-      this.tiles.delete(key);
-      
-      // Free memory
-      if (existing.imageBitmap) {
-        const bytes = existing.width * existing.height * 4;
-        this.cpuBytes -= bytes;
-        existing.imageBitmap.close();
+    // Update level index
+    const levelTiles = this.tilesByLevel.get(tile.level);
+    if (levelTiles) {
+      levelTiles.delete(key);
+      if (levelTiles.size === 0) {
+        this.tilesByLevel.delete(tile.level);
       }
+    }
+    
+    // Free memory
+    if (tile.imageBitmap) {
+      const bytes = tile.width * tile.height * 4;
+      this.cpuBytes = Math.max(0, this.cpuBytes - bytes);
+      tile.imageBitmap.close();
     }
   }
 
@@ -141,23 +189,42 @@ export class TileCache {
     while (this.cpuBytes > this.options.maxCPUBytes && this.tiles.size > 0) {
       this.evictLRU(1);
     }
-    
-    // GPU memory is managed by backend, but we track it here
-    // Backend should call evictGPU() when needed
   }
 
   /**
    * Evict least recently used tiles
+   * Respects preferred levels by evicting non-preferred first
    */
   evictLRU(count: number): void {
-    const tiles = Array.from(this.tiles.values());
+    const tiles = Array.from(this.tiles.entries());
     
-    // Sort by last access time (oldest first)
-    tiles.sort((a, b) => a.lastAccess - b.lastAccess);
+    // Sort by priority: non-visible first, then non-preferred levels, then by access time
+    tiles.sort(([_keyA, a], [_keyB, b]) => {
+      // Visible tiles are kept longer
+      if (a.visible !== b.visible) {
+        return a.visible ? 1 : -1;
+      }
+      
+      // Preferred levels are kept longer
+      const aPreferred = this.options.preferredLevels.includes(a.level);
+      const bPreferred = this.options.preferredLevels.includes(b.level);
+      if (aPreferred !== bPreferred) {
+        return aPreferred ? 1 : -1;
+      }
+      
+      // Lower levels (higher res) are kept longer by default
+      if (a.level !== b.level) {
+        return b.level - a.level; // Evict higher level numbers first
+      }
+      
+      // Finally, sort by last access time
+      return a.lastAccess - b.lastAccess;
+    });
     
-    // Evict oldest tiles
+    // Evict tiles
     for (let i = 0; i < Math.min(count, tiles.length); i++) {
-      this.remove(tiles[i]!);
+      const [key] = tiles[i]!;
+      this.removeByKey(key);
     }
   }
 
@@ -165,12 +232,24 @@ export class TileCache {
    * Evict tiles that are not visible
    */
   evictInvisible(): void {
-    const tiles = Array.from(this.tiles.values());
+    const tiles = Array.from(this.tiles.entries());
     
-    for (const tile of tiles) {
+    for (const [key, tile] of tiles) {
       if (!tile.visible) {
-        this.remove(tile);
+        this.removeByKey(key);
       }
+    }
+  }
+
+  /**
+   * Evict all tiles at a specific level
+   */
+  evictLevel(level: number): void {
+    const levelTiles = this.tilesByLevel.get(level);
+    if (!levelTiles) return;
+    
+    for (const key of [...levelTiles]) {
+      this.removeByKey(key);
     }
   }
 
@@ -186,13 +265,79 @@ export class TileCache {
   }
 
   /**
+   * Mark all tiles at a level as invisible
+   */
+  setLevelInvisible(level: number): void {
+    const levelTiles = this.tilesByLevel.get(level);
+    if (!levelTiles) return;
+    
+    for (const key of levelTiles) {
+      const tile = this.tiles.get(key);
+      if (tile) {
+        tile.visible = false;
+      }
+    }
+  }
+
+  /**
+   * Mark all tiles as invisible
+   */
+  markAllInvisible(): void {
+    for (const tile of this.tiles.values()) {
+      tile.visible = false;
+    }
+  }
+
+  /**
+   * Get all tiles at a specific level
+   */
+  getTilesAtLevel(level: number): Tile[] {
+    const levelTiles = this.tilesByLevel.get(level);
+    if (!levelTiles) return [];
+    
+    const tiles: Tile[] = [];
+    for (const key of levelTiles) {
+      const tile = this.tiles.get(key);
+      if (tile) {
+        tiles.push(tile);
+      }
+    }
+    return tiles;
+  }
+
+  /**
+   * Find tiles at a level that cover a given area in image space
+   */
+  findCoveringTiles(
+    level: number,
+    imageX: number,
+    imageY: number,
+    imageWidth: number,
+    imageHeight: number
+  ): Tile[] {
+    const levelTiles = this.getTilesAtLevel(level);
+    
+    return levelTiles.filter(tile => {
+      // Check if tile overlaps with the given area
+      const tileRight = tile.imageX + tile.width;
+      const tileBottom = tile.imageY + tile.height;
+      const areaRight = imageX + imageWidth;
+      const areaBottom = imageY + imageHeight;
+      
+      return !(tile.imageX >= areaRight || tileRight <= imageX ||
+               tile.imageY >= areaBottom || tileBottom <= imageY);
+    });
+  }
+
+  /**
    * Clear all tiles from cache
    */
   clear(): void {
-    const tiles = Array.from(this.tiles.values());
-    for (const tile of tiles) {
-      this.remove(tile);
+    const keys = [...this.tiles.keys()];
+    for (const key of keys) {
+      this.removeByKey(key);
     }
+    this.tilesByLevel.clear();
   }
 
   /**
@@ -202,6 +347,12 @@ export class TileCache {
     const total = this.hits + this.misses;
     const hitRate = total > 0 ? this.hits / total : 0;
     
+    // Count tiles per level
+    const tilesPerLevel = new Map<number, number>();
+    for (const [level, keys] of this.tilesByLevel) {
+      tilesPerLevel.set(level, keys.size);
+    }
+    
     return {
       tileCount: this.tiles.size,
       cpuBytes: this.cpuBytes,
@@ -209,6 +360,7 @@ export class TileCache {
       hits: this.hits,
       misses: this.misses,
       hitRate,
+      tilesPerLevel,
     };
   }
 
@@ -224,5 +376,12 @@ export class TileCache {
    */
   getVisibleTiles(): Tile[] {
     return Array.from(this.tiles.values()).filter(tile => tile.visible);
+  }
+
+  /**
+   * Get levels that have tiles in cache
+   */
+  getCachedLevels(): number[] {
+    return Array.from(this.tilesByLevel.keys()).sort((a, b) => a - b);
   }
 }

@@ -55,61 +55,84 @@ export class Canvas2DBackend extends BaseBackend {
   }
 
   renderTiles(tiles: Tile[], view: ViewUniforms): void {
-    if (!this.ctx) return;
+    if (!this.ctx || !this.canvas) return;
+    
+    // Clear canvas before rendering
+    this.clear();
     
     // Save context state
     this.ctx.save();
     
     // Apply view transform
+    // Our view matrix is a 3x3 affine matrix stored as:
+    // [m00, m01, m02, m10, m11, m12, m20, m21, m22]
+    // Which represents:
+    // [m00 m01 m02]   [a c e]
+    // [m10 m11 m12] = [b d f]
+    // [m20 m21 m22]   [0 0 1]
+    //
+    // Canvas2D setTransform expects: (a, b, c, d, e, f)
     const m = view.viewMatrix;
-    const m00 = m[0] ?? 0;
-    const m01 = m[1] ?? 0;
-    const m02 = m[2] ?? 0;
-    const m10 = m[3] ?? 0;
-    const m11 = m[4] ?? 0;
-    const m12 = m[5] ?? 0;
+    const a = m[0] ?? 1;   // m00 - horizontal scaling
+    const c = m[1] ?? 0;   // m01 - horizontal skewing
+    const e = m[2] ?? 0;   // m02 - horizontal translation
+    const b = m[3] ?? 0;   // m10 - vertical skewing
+    const d = m[4] ?? 1;   // m11 - vertical scaling
+    const f = m[5] ?? 0;   // m12 - vertical translation
     
-    this.ctx.setTransform(m00, m10, m01, m11, m02, m12);
+    this.ctx.setTransform(a, b, c, d, e, f);
     
     // Render tiles
+    let renderedCount = 0;
     for (const tile of tiles) {
-      if (!tile.imageBitmap) continue;
+      if (!tile.imageBitmap) {
+        continue;
+      }
       
-      this.ctx.drawImage(
-        tile.imageBitmap,
-        tile.imageX,
-        tile.imageY,
-        tile.width,
-        tile.height
-      );
+      try {
+        // Draw tile at its image-space position
+        // The view transform will convert this to screen space
+        this.ctx.drawImage(
+          tile.imageBitmap,
+          tile.imageX,
+          tile.imageY,
+          tile.width,
+          tile.height
+        );
+        renderedCount++;
+      } catch (error) {
+        console.error(`[Canvas2D] Error drawing tile (${tile.x}, ${tile.y}):`, error);
+      }
     }
     
     // Restore context state
     this.ctx.restore();
   }
 
-  renderAnnotations(batch: AnnotationBatch, view: ViewUniforms): void {
+  renderAnnotations(_batch: AnnotationBatch, _view: ViewUniforms): void {
     if (!this.ctx) return;
     
     // TODO: Implement annotation rendering with Canvas2D
     // Draw paths, shapes, text, etc.
   }
 
-  renderOverlays(overlays: Overlay[], view: ViewUniforms): void {
+  renderOverlays(_overlays: Overlay[], _view: ViewUniforms): void {
     if (!this.ctx) return;
     
     // TODO: Implement overlay rendering
     // Draw UI elements, handles, previews, etc.
   }
 
-  async uploadTile(tile: Tile): Promise<void> {
+  async uploadTile(_tile: Tile): Promise<void> {
     // Canvas2D doesn't need explicit upload
     // ImageBitmap can be drawn directly
     return Promise.resolve();
   }
 
   destroy(): void {
-    super.destroy();
+    if (super.destroy) {
+      super.destroy();
+    }
     this.ctx = null;
   }
 }

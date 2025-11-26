@@ -121,7 +121,7 @@ export class Viewer extends EventEmitter<ViewerEvents> {
       this.state.ready = true; // Viewer is ready to render (even without an image)
       
       if (this.options.debug) {
-        console.log('[Tessera] Viewer initialized', {
+        console.info('[Tessera] Viewer initialized', {
           backend: this.backendType,
           canvas: `${this.canvas.width}x${this.canvas.height}`,
         });
@@ -161,7 +161,7 @@ export class Viewer extends EventEmitter<ViewerEvents> {
     this.viewport.setDPR(dpr);
     
     if (this.options.debug) {
-      console.log('[Tessera] Canvas setup:', {
+      console.debug('[Tessera] Canvas setup:', {
         rect: `${rect.width}x${rect.height}`,
         canvas: `${this.canvas.width}x${this.canvas.height}`,
         dpr,
@@ -193,7 +193,7 @@ export class Viewer extends EventEmitter<ViewerEvents> {
           this.emit('viewer:backend-changed', { backend: backendType });
           
           if (this.options.debug) {
-            console.log(`[Tessera] Initialized ${backendType} backend`);
+            console.info(`[Tessera] Initialized ${backendType} backend`);
           }
           
           return;
@@ -330,7 +330,7 @@ export class Viewer extends EventEmitter<ViewerEvents> {
         // Update if dimensions differ from provided size
         if (!size || size[0] !== actualWidth || size[1] !== actualHeight) {
           if (size && (size[0] !== actualWidth || size[1] !== actualHeight)) {
-            console.log(`[Viewer] Updating image dimensions from ${size[0]}x${size[1]} to ${actualWidth}x${actualHeight}`);
+            console.debug(`[Viewer] Updating image dimensions from ${size[0]}x${size[1]} to ${actualWidth}x${actualHeight}`);
           }
           size = [actualWidth, actualHeight];
           this.state.imageSize = size;
@@ -344,6 +344,12 @@ export class Viewer extends EventEmitter<ViewerEvents> {
         // Wait for tile manager to initialize and preload the first tile
         // This ensures tiles are available for the first render
         await this.preloadInitialTiles();
+      }
+      
+      // Fit the image to the viewport so it's fully visible and centered on load
+      // This must happen after image size is set
+      if (this.state.imageSize) {
+        this.viewport.fitToView();
       }
       
       this.updateState();
@@ -436,48 +442,28 @@ export class Viewer extends EventEmitter<ViewerEvents> {
       // Render tiles if available
       if (this.tiles && this.backend.renderTiles) {
         const visibleTiles = await this.tiles.getVisibleTiles(viewUniforms);
-        if (this.options.debug) {
-          console.log(`[Viewer] Found ${visibleTiles.length} visible tiles`);
-          if (visibleTiles.length > 0) {
-            const firstTile = visibleTiles[0];
-            console.log(`[Viewer] First tile:`, {
-              level: firstTile.level,
-              x: firstTile.x,
-              y: firstTile.y,
-              width: firstTile.width,
-              height: firstTile.height,
-              imageX: firstTile.imageX,
-              imageY: firstTile.imageY,
-              hasBitmap: !!firstTile.imageBitmap,
-              bitmapWidth: firstTile.imageBitmap?.width,
-              bitmapHeight: firstTile.imageBitmap?.height,
-              loaded: firstTile.loaded,
-            });
-            
-            // Check all tiles for bitmaps
-            const tilesWithBitmaps = visibleTiles.filter(t => t.imageBitmap).length;
-            console.log(`[Viewer] Tiles with bitmaps: ${tilesWithBitmaps}/${visibleTiles.length}`);
-            
-            if (tilesWithBitmaps === 0) {
-              console.warn('[Viewer] WARNING: No tiles have imageBitmaps!');
-            }
-          }
-        }
+        
         if (visibleTiles.length > 0) {
+          // Check for tiles without bitmaps (potential issue)
+          const tilesWithBitmaps = visibleTiles.filter(t => t.imageBitmap).length;
+          if (tilesWithBitmaps === 0 && this.options.debug) {
+            console.warn('[Viewer] No tiles have imageBitmaps - tiles may still be loading');
+          }
+          
           // Upload tiles to GPU if needed
           for (const tile of visibleTiles) {
             if (tile.imageBitmap && this.backend.uploadTile && !tile.texture) {
               await this.backend.uploadTile(tile);
             }
           }
+          
+          // Render
           if (this.backend.renderTiles) {
-            console.log(`[Viewer] Calling renderTiles with ${visibleTiles.length} tiles`);
             try {
               const result = this.backend.renderTiles(visibleTiles, viewUniforms);
               if (result instanceof Promise) {
                 await result;
               }
-              console.log('[Viewer] renderTiles completed');
             } catch (renderError) {
               console.error('[Viewer] Error in renderTiles:', renderError);
             }
@@ -487,9 +473,6 @@ export class Viewer extends EventEmitter<ViewerEvents> {
         } else {
           // No tiles visible yet - they might be loading
           // Trigger another render after a short delay to check again
-          if (this.options.debug) {
-            console.log('[Viewer] No visible tiles found, retrying...');
-          }
           setTimeout(() => {
             this.requestRender();
           }, 100);
@@ -604,7 +587,7 @@ export class Viewer extends EventEmitter<ViewerEvents> {
     this.viewport.removeAllListeners();
     
     if (this.options.debug) {
-      console.log('[Tessera] Viewer destroyed');
+      console.debug('[Tessera] Viewer destroyed');
     }
   }
 }

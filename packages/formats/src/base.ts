@@ -2,7 +2,7 @@
  * Base format parser implementation
  */
 
-import type { TileSource, TileSourceOptions } from '@tessera/rendering';
+import type { TileSource } from '@tessera/rendering';
 import type { FormatConfig, FormatMetadata, FormatParser } from './types.js';
 
 /**
@@ -27,7 +27,7 @@ export abstract class BaseFormatParser implements FormatParser {
   /**
    * Get format metadata
    */
-  async getMetadata(source: string | ArrayBuffer | File): Promise<FormatMetadata> {
+  async getMetadata(_source: string | ArrayBuffer | File): Promise<FormatMetadata> {
     return this.metadata;
   }
 

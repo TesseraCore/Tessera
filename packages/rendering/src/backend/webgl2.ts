@@ -60,7 +60,7 @@ export class WebGL2Backend extends BaseBackend {
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
   }
 
-  renderTiles(tiles: Tile[], view: ViewUniforms): void {
+  renderTiles(_tiles: Tile[], _view: ViewUniforms): void {
     if (!this.gl) return;
     
     // TODO: Implement tile rendering with WebGL2
@@ -68,13 +68,13 @@ export class WebGL2Backend extends BaseBackend {
     // Set up shaders and render quads
   }
 
-  renderAnnotations(batch: AnnotationBatch, view: ViewUniforms): void {
+  renderAnnotations(_batch: AnnotationBatch, _view: ViewUniforms): void {
     if (!this.gl) return;
     
     // TODO: Implement annotation rendering
   }
 
-  renderOverlays(overlays: Overlay[], view: ViewUniforms): void {
+  renderOverlays(_overlays: Overlay[], _view: ViewUniforms): void {
     if (!this.gl) return;
     
     // TODO: Implement overlay rendering
@@ -88,7 +88,9 @@ export class WebGL2Backend extends BaseBackend {
   }
 
   destroy(): void {
-    super.destroy();
+    if (super.destroy) {
+      super.destroy();
+    }
     
     if (this.gl) {
       // Clean up WebGL resources

@@ -2,7 +2,7 @@
  * Translation transformations
  */
 
-export function translate(point: { x: number; y: number }, delta: { x: number; y: number }) {
+export function translate(_point: { x: number; y: number }, _delta: { x: number; y: number }) {
   // TODO: Implement translation
 }
 

@@ -2,7 +2,7 @@
  * Rotation transformations
  */
 
-export function rotate(point: { x: number; y: number }, angle: number, center?: { x: number; y: number }) {
+export function rotate(_point: { x: number; y: number }, _angle: number, _center?: { x: number; y: number }) {
   // TODO: Implement rotation
 }
 

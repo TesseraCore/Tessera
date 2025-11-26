@@ -98,8 +98,8 @@ export class GraphQLTileSource extends BaseTileSource {
           break;
         case 'custom':
           if (config.auth.customAuth) {
-            const customHeaders = config.auth.customAuth({ headers });
-            return { ...headers, ...customHeaders };
+            const customConfig = config.auth.customAuth({ headers });
+            return { ...headers, ...customConfig.headers };
           }
           break;
       }

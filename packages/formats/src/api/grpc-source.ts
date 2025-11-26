@@ -7,7 +7,7 @@
 import type { Tile } from '@tessera/rendering';
 import { BaseTileSource } from '../sources/base-source.js';
 import type { APITileSourceConfig, URLTemplate } from './types.js';
-import { parseURLTemplate, URLTemplates } from './url-templates.js';
+import { parseURLTemplate } from './url-templates.js';
 
 /**
  * gRPC tile source configuration
@@ -97,8 +97,8 @@ export class GRPCTileSource extends BaseTileSource {
           break;
         case 'custom':
           if (config.auth.customAuth) {
-            const customHeaders = config.auth.customAuth({ headers });
-            return { ...headers, ...customHeaders };
+            const customConfig = config.auth.customAuth({ headers });
+            return { ...headers, ...customConfig.headers };
           }
           break;
       }

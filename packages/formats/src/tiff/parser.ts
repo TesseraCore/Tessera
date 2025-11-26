@@ -164,18 +164,18 @@ export class TIFFParser extends BaseFormatParser {
           const uniqueTags = new Set<string>();
           unknownTagWarnings.forEach(warning => {
             const tagMatch = warning.match(/tag type:\s*(\d+)/);
-            if (tagMatch) {
+            if (tagMatch && tagMatch[1]) {
               uniqueTags.add(tagMatch[1]);
             }
             // Log each warning
             console.warn(warning);
           });
           
-          console.log(`\nTotal: ${unknownTagWarnings.length} warnings, ${uniqueTags.size} unique tag types`);
-          console.log('These are custom/private TIFF tags (e.g., OME metadata) and don\'t affect image rendering.');
+          console.debug(`\nTotal: ${unknownTagWarnings.length} warnings, ${uniqueTags.size} unique tag types`);
+          console.debug('These are custom/private TIFF tags (e.g., OME metadata) and don\'t affect image rendering.');
         } else {
           // If no warnings, just close the empty group
-          console.log('No unknown tag warnings.');
+          console.debug('No unknown tag warnings.');
         }
         
         // End the group
@@ -185,8 +185,6 @@ export class TIFFParser extends BaseFormatParser {
         if (!ifds || ifds.length === 0) {
           throw new Error('Failed to decode TIFF file: No image data found');
         }
-        
-        console.log('[TIFF] Decoded', ifds.length, 'IFD(s), buffer size:', arrayBuffer.byteLength);
       } catch (error) {
         // Always restore console.warn even on error
         console.warn = originalWarn;
@@ -197,16 +195,13 @@ export class TIFFParser extends BaseFormatParser {
             const uniqueTags = new Set<string>();
             unknownTagWarnings.forEach(warning => {
               const tagMatch = warning.match(/tag type:\s*(\d+)/);
-              if (tagMatch) {
+              if (tagMatch && tagMatch[1]) {
                 uniqueTags.add(tagMatch[1]);
               }
               console.warn(warning);
             });
             
-            console.log(`\nTotal: ${unknownTagWarnings.length} warnings, ${uniqueTags.size} unique tag types`);
-            console.log('These are custom/private TIFF tags (e.g., OME metadata) and don\'t affect image rendering.');
-          } else {
-            console.log('No unknown tag warnings.');
+            console.debug(`Total: ${unknownTagWarnings.length} warnings, ${uniqueTags.size} unique tag types`);
           }
           console.groupEnd();
           groupActive = false;
@@ -215,153 +210,162 @@ export class TIFFParser extends BaseFormatParser {
         throw error;
       }
       
-      // Try all IFDs to find one with valid dimensions and tiling info
-      // Often the first IFD has the full-resolution image
-      let ifd = ifds[0];
-      let foundValidIFD = false;
+      // Walk the IFD chain manually - this is more reliable for BigTIFF
+      const manualIFDs = this.walkAllIFDs(arrayBuffer);
       
-      // Check all IFDs for dimensions and tiling
-      for (let i = 0; i < ifds.length; i++) {
-        const testIFD = ifds[i];
-        const testWidth = this.getIFDTag(testIFD, 256) || testIFD.width;
-        const testHeight = this.getIFDTag(testIFD, 257) || testIFD.height;
+      // For whole slide images (WSI), there are often multiple IFDs:
+      // - Label image (small text label of the slide)
+      // - Macro image (overview thumbnail)
+      // - Main pyramid image (the actual high-res tiled image we want)
+      // - Lower resolution levels of the pyramid
+      // 
+      // We need to find the LARGEST tiled IFD, which is the base of the pyramid (main image).
+      // This avoids accidentally selecting the label or macro image.
+      
+      interface IFDCandidate {
+        ifd: any;
+        manualTags: Record<string, any> | null;
+        index: number;
+        width: number;
+        height: number;
+        pixelCount: number;
+        isTiled: boolean;
+        tileWidth?: number;
+        tileHeight?: number;
+      }
+      
+      const candidates: IFDCandidate[] = [];
+      
+      // Use manually walked IFDs as the primary source (more reliable for BigTIFF)
+      // Fall back to UTIF data if manual walking fails
+      const ifdCount = Math.max(manualIFDs.length, ifds?.length ?? 0);
+      
+      for (let i = 0; i < ifdCount; i++) {
+        const manualData = manualIFDs[i];
+        const utifIFD = ifds?.[i];
+        
+        // Get dimensions - prefer manual data
+        let testWidth = manualData?.width;
+        let testHeight = manualData?.height;
+        
+        // Fall back to UTIF if manual data missing
+        if (!testWidth || !testHeight) {
+          if (utifIFD) {
+            testWidth = this.getIFDTag(utifIFD, 256) || utifIFD.width;
+            testHeight = this.getIFDTag(utifIFD, 257) || utifIFD.height;
+            
+            if (Array.isArray(testWidth)) testWidth = testWidth[0];
+            if (Array.isArray(testHeight)) testHeight = testHeight[0];
+            
+            // Try decoding the IFD to populate dimensions if not available
+            if (!testWidth || !testHeight) {
+              try {
+                UTIF.decodeImage(arrayBuffer, utifIFD);
+                testWidth = utifIFD.width;
+                testHeight = utifIFD.height;
+              } catch (e) {
+                // Ignore decode errors
+              }
+            }
+          }
+        }
         
         if (testWidth && testHeight && testWidth > 0 && testHeight > 0) {
-          ifd = testIFD;
-          foundValidIFD = true;
-          console.log(`[TIFF] Using IFD ${i} with dimensions: ${testWidth}x${testHeight}`);
-          break;
+          // Check if this IFD has tiling info - prefer manual data
+          const testTileWidth = manualData?.tileWidth || (utifIFD ? this.getIFDTag(utifIFD, 322) : undefined);
+          const testTileHeight = manualData?.tileHeight || (utifIFD ? this.getIFDTag(utifIFD, 323) : undefined);
+          const testTileOffsets = manualData?.tileOffsets || (utifIFD ? this.getIFDTag(utifIFD, 324) : undefined);
+          const testTileByteCounts = manualData?.tileByteCounts || (utifIFD ? this.getIFDTag(utifIFD, 325) : undefined);
+          
+          const isTiled = !!(testTileWidth && testTileHeight && testTileOffsets && testTileByteCounts);
+          
+          candidates.push({
+            ifd: utifIFD,
+            manualTags: manualData || null,
+            index: i,
+            width: testWidth,
+            height: testHeight,
+            pixelCount: testWidth * testHeight,
+            isTiled,
+            tileWidth: testTileWidth,
+            tileHeight: testTileHeight,
+          });
         }
       }
       
-      if (!foundValidIFD && ifds.length > 0) {
+      // Sort candidates: prefer tiled images, then by pixel count (largest first)
+      candidates.sort((a, b) => {
+        // Tiled images come first
+        if (a.isTiled && !b.isTiled) return -1;
+        if (!a.isTiled && b.isTiled) return 1;
+        // Then by pixel count (largest first)
+        return b.pixelCount - a.pixelCount;
+      });
+      
+      let ifd = ifds[0];
+      let foundValidIFD = false;
+      
+      if (candidates.length > 0) {
+        const best = candidates[0]!;
+        ifd = best.ifd;
+        foundValidIFD = true;
+        
+        // Log all IFD analysis in a collapsed group with table
+        console.groupCollapsed(`[TIFF] 📊 Parsed ${manualIFDs.length} IFDs → Selected IFD ${best.index} (${best.width}×${best.height}, ${(best.pixelCount / 1e6).toFixed(1)} MP, ${best.isTiled ? 'tiled' : 'non-tiled'})`);
+        
+        // Create table data for all candidates
+        const tableData = candidates.map(c => ({
+          'IFD': c.index,
+          'Dimensions': `${c.width}×${c.height}`,
+          'Megapixels': (c.pixelCount / 1e6).toFixed(1),
+          'Tiled': c.isTiled ? '✓' : '✗',
+          'Tile Size': c.isTiled ? `${c.tileWidth}×${c.tileHeight}` : '-',
+          'Selected': c.index === best.index ? '★' : '',
+        }));
+        console.table(tableData);
+        console.groupEnd();
+      }
+      
+      // Get dimensions from the best candidate if we found one
+      let width: number | undefined = config?.dimensions?.[0];
+      let height: number | undefined = config?.dimensions?.[1];
+      let selectedCandidate: IFDCandidate | null = null;
+      
+      
+      // Use dimensions from the selected candidate (most reliable)
+      if (candidates.length > 0 && candidates[0]) {
+        selectedCandidate = candidates[0];
+        width = selectedCandidate.width;
+        height = selectedCandidate.height;
+      }
+      
+      if (!foundValidIFD && ifds && ifds.length > 0) {
         // Fallback: use first IFD anyway
         ifd = ifds[0];
         console.debug('[TIFF] No IFD with valid dimensions found, using first IFD (will try to read dimensions manually)');
       }
       
-      // Get image dimensions from IFD
-      // UTIF stores dimensions in ifd.width and ifd.height, but they might be
-      // in the tag data. UTIF also stores tags with 't' prefix (e.g., t256, t257)
-      // Try all IFDs to find dimensions
-      let width: number | undefined = config?.dimensions?.[0];
-      let height: number | undefined = config?.dimensions?.[1];
+      // Get tags from the selected candidate's manual data (from walkAllIFDs)
+      const selectedManualTags = selectedCandidate?.manualTags || {};
       
-      if (width && height) {
-        console.log(`[TIFF] Using provided dimensions: ${width}x${height}`);
-      }
       
-      // Read manual tags early so we can use them for tiling detection and dimensions
-      const manualTags = this.readTIFFTags(arrayBuffer, ifds[0]);
-      
-      // Check manual tags for dimensions first (works for BigTIFF too)
-      if (manualTags.width && manualTags.height && manualTags.width > 0 && manualTags.height > 0) {
-        width = manualTags.width;
-        height = manualTags.height;
-        console.log(`[TIFF] Found dimensions in manual tags: ${width}x${height}`);
-      }
-      
-      for (let i = 0; i < ifds.length; i++) {
-        const testIFD = ifds[i];
-        
-        // Try decoding this IFD to see if it populates width/height
-        try {
-          UTIF.decodeImage(arrayBuffer, testIFD);
-        } catch (e) {
-          // Ignore decode errors, just try to read dimensions
-        }
-        
-        // Try multiple ways to get dimensions
-        let testWidth = testIFD.width;
-        let testHeight = testIFD.height;
-        
-        // Try tag 256 (ImageWidth) and 257 (ImageLength/height)
-        if (!testWidth) {
-          testWidth = this.getIFDTag(testIFD, 256);
-          if (Array.isArray(testWidth)) {
-            testWidth = testWidth[0];
-          }
-        }
-        
-        if (!testHeight) {
-          testHeight = this.getIFDTag(testIFD, 257);
-          if (Array.isArray(testHeight)) {
-            testHeight = testHeight[0];
-          }
-        }
-        
-        if (testWidth && testHeight && testWidth > 0 && testHeight > 0) {
-          width = testWidth;
-          height = testHeight;
-          ifd = testIFD; // Use this IFD
-          console.log(`[TIFF] Found dimensions in IFD ${i}: ${width}x${height}`);
-          break;
-        }
-      }
-      
-      // If still not found, try the selected IFD one more time
-      if (!width || !height) {
-        width = ifd.width;
-        height = ifd.height;
-        
-        // Try reading from UTIF tag properties (with 't' prefix)
-        if (!width || !height) {
-          const tag256 = this.getIFDTag(ifd, 256);
-          const tag257 = this.getIFDTag(ifd, 257);
-          
-          if (tag256 !== undefined) {
-            width = Array.isArray(tag256) ? tag256[0] : tag256;
-          }
-          if (tag257 !== undefined) {
-            height = Array.isArray(tag257) ? tag257[0] : tag257;
-          }
-        }
-      }
-      
-      // Debug: Log all tag values that might be dimensions
-      if (!width || !height) {
-        console.log('[TIFF] Debugging dimension tags:');
-        for (const tagNum of [256, 257, 2568, 2570, 2573]) {
-          const tagValue = this.getIFDTag(ifd, tagNum);
-          if (tagValue !== undefined) {
-            console.log(`  Tag ${tagNum}:`, tagValue);
-          }
-        }
-        // Also check ifd properties directly
-        const ifdKeys = Object.keys(ifd);
-        for (const key of ifdKeys) {
-          if (key.includes('256') || key.includes('257')) {
-            console.log(`  IFD.${key}:`, (ifd as any)[key]);
-          }
-        }
-      }
-      
-      // Check if this is a tiled TIFF (check AFTER reading manual tags)
-      // Tag 322 = TileWidth, Tag 323 = TileLength (TileHeight)
-      // Tag 324 = TileOffsets, Tag 325 = TileByteCounts
-      // Try manual tags first (they're more reliable for BigTIFF), then UTIF tags
-      const tileWidth = manualTags.tileWidth || this.getIFDTag(ifd, 322);
-      const tileHeight = manualTags.tileHeight || this.getIFDTag(ifd, 323);
-      const tileOffsets = manualTags.tileOffsets || this.getIFDTag(ifd, 324);
-      const tileByteCounts = manualTags.tileByteCounts || this.getIFDTag(ifd, 325);
+      // Check if the selected candidate is tiled
+      // Use the candidate's tiling info (from walkAllIFDs or UTIF)
+      const tileWidth = selectedCandidate?.tileWidth || selectedManualTags.tileWidth || (ifd ? this.getIFDTag(ifd, 322) : undefined);
+      const tileHeight = selectedCandidate?.tileHeight || selectedManualTags.tileHeight || (ifd ? this.getIFDTag(ifd, 323) : undefined);
+      const tileOffsets = selectedManualTags.tileOffsets || (ifd ? this.getIFDTag(ifd, 324) : undefined);
+      const tileByteCounts = selectedManualTags.tileByteCounts || (ifd ? this.getIFDTag(ifd, 325) : undefined);
 
-      console.log('[TIFF] Tiling check:', {
-        tileWidth: tileWidth ?? 'none',
-        tileHeight: tileHeight ?? 'none',
-        tileOffsets: tileOffsets ? (Array.isArray(tileOffsets) ? `array(${tileOffsets.length})` : 'single') : 'none',
-        tileByteCounts: tileByteCounts ? (Array.isArray(tileByteCounts) ? `array(${tileByteCounts.length})` : 'single') : 'none',
-        isTiled: !!(tileWidth && tileHeight && tileOffsets && tileByteCounts),
-      });
 
-      if (tileWidth && tileHeight && tileOffsets && tileByteCounts) {
+      if (tileWidth && tileHeight && tileOffsets && tileByteCounts && width && height) {
         // This is a tiled TIFF - use TIFFTileSource
-        console.log('[TIFF] Detected tiled TIFF:', {
-          width,
-          height,
-          tileWidth,
-          tileHeight,
-          tileCount: Array.isArray(tileOffsets) ? tileOffsets.length : 1,
-        });
+        // Get compression and color settings from manual tags or UTIF
+        const compression = selectedManualTags.compression || (ifd ? this.getIFDTag(ifd, 259) : undefined) || 1;
+        const photometric = selectedManualTags.photometric || (ifd ? this.getIFDTag(ifd, 262) : undefined) || 2;
+        const samplesPerPixel = selectedManualTags.samplesPerPixel || (ifd ? this.getIFDTag(ifd, 277) : undefined) || 3;
+        const bitsPerSample = selectedManualTags.bitsPerSample || (ifd ? this.getIFDTag(ifd, 258) : undefined) || 8;
+        const predictor = (ifd ? this.getIFDTag(ifd, 317) : undefined) || 1;
+        
 
         const tilesAcross = Math.ceil(width / tileWidth);
         const tilesDown = Math.ceil(height / tileHeight);
@@ -380,16 +384,21 @@ export class TIFFParser extends BaseFormatParser {
           tileByteCounts: countsArray,
           tilesAcross,
           tilesDown,
+          compression,
+          photometric,
+          samplesPerPixel,
+          bitsPerSample,
+          predictor,
         });
       }
 
       // Not a tiled TIFF - decode the full image
-      console.log('[TIFF] Non-tiled TIFF, decoding full image');
       
       // Check if this is a strip-based TIFF (tag 273 = StripOffsets, tag 279 = StripByteCounts)
       const stripOffsets = this.getIFDTag(ifd, 273);
       const stripByteCounts = this.getIFDTag(ifd, 279);
-      const rowsPerStrip = this.getIFDTag(ifd, 278) || height; // Default to full height if not specified
+      // Note: rowsPerStrip is available for advanced strip reading but not currently used
+      // const rowsPerStrip = this.getIFDTag(ifd, 278) || height;
       
       // Try to decode image data - try all IFDs if the first one fails
       let decodedIFD: any = null;
@@ -400,7 +409,6 @@ export class TIFFParser extends BaseFormatParser {
           if (testIFD.data) {
             decodedIFD = testIFD;
             ifd = testIFD; // Use this IFD
-            console.log(`[TIFF] Successfully decoded IFD ${i}`);
             break;
           }
         } catch (decodeError) {
@@ -415,7 +423,6 @@ export class TIFFParser extends BaseFormatParser {
           UTIF.decodeImage(arrayBuffer, ifd);
           if (ifd.data) {
             decodedIFD = ifd;
-            console.log('[TIFF] Successfully decoded original IFD');
           }
         } catch (decodeError) {
           console.warn('[TIFF] Error decoding original IFD:', decodeError);
@@ -426,9 +433,6 @@ export class TIFFParser extends BaseFormatParser {
       if (!width || !height) {
         width = ifd.width;
         height = ifd.height;
-        if (width && height) {
-          console.log(`[TIFF] Got dimensions from decoded image: ${width}x${height}`);
-        }
       }
       
       // Try again after decodeImage (it might set width/height)
@@ -461,16 +465,14 @@ export class TIFFParser extends BaseFormatParser {
       
       // If still no dimensions, check manual tags again (in case they weren't checked earlier)
       if (!width || !height || width <= 0 || height <= 0) {
-        if (manualTags.width && manualTags.height && manualTags.width > 0 && manualTags.height > 0) {
-          width = manualTags.width;
-          height = manualTags.height;
-          console.log(`[TIFF] Found dimensions in manual tags (fallback): ${width}x${height}`);
+        if (selectedManualTags.width && selectedManualTags.height && selectedManualTags.width > 0 && selectedManualTags.height > 0) {
+          width = selectedManualTags.width;
+          height = selectedManualTags.height;
         } else {
           // Last resort: try manual parsing (doesn't support BigTIFF)
           console.debug('[TIFF] Attempting manual dimension parsing...');
           const manualDims = this.readTIFFDimensions(arrayBuffer);
           if (manualDims) {
-            console.log('[TIFF] Manual parser found dimensions:', manualDims);
             width = manualDims[0];
             height = manualDims[1];
           } else {
@@ -481,7 +483,6 @@ export class TIFFParser extends BaseFormatParser {
       
       // Try to infer dimensions from decoded image data if available
       if ((!width || !height || width <= 0 || height <= 0) && ifd.data) {
-        console.log('[TIFF] Attempting to infer dimensions from image data...');
         const dataLength = ifd.data.length;
         
         // Try common bytes-per-pixel values
@@ -493,7 +494,6 @@ export class TIFFParser extends BaseFormatParser {
           if (Number.isInteger(sqrt) && sqrt > 0 && sqrt < 100000) {
             width = sqrt;
             height = sqrt;
-            console.log(`[TIFF] Inferred square dimensions: ${width}x${height} (${bpp} bytes/pixel)`);
             break;
           }
           
@@ -506,7 +506,11 @@ export class TIFFParser extends BaseFormatParser {
             [2, 1],      // 2:1
           ];
           
-          for (const [wRatio, hRatio] of commonRatios) {
+          for (const ratio of commonRatios) {
+            const wRatio = ratio[0];
+            const hRatio = ratio[1];
+            if (wRatio === undefined || hRatio === undefined) continue;
+            
             const aspectRatio = wRatio / hRatio;
             const h = Math.sqrt(totalPixels / aspectRatio);
             const w = h * aspectRatio;
@@ -514,7 +518,6 @@ export class TIFFParser extends BaseFormatParser {
             if (Number.isInteger(w) && Number.isInteger(h) && w > 0 && h > 0 && w < 100000 && h < 100000) {
               width = w;
               height = h;
-              console.log(`[TIFF] Inferred dimensions: ${width}x${height} (${bpp} bytes/pixel, ${wRatio}:${hRatio} ratio)`);
               break;
             }
           }
@@ -525,16 +528,14 @@ export class TIFFParser extends BaseFormatParser {
       
       // Last resort: try to decode image and check if UTIF populates dimensions
       if ((!width || !height || width <= 0 || height <= 0) && !ifd.data) {
-        console.log('[TIFF] Attempting to decode image to get dimensions...');
         try {
           UTIF.decodeImage(arrayBuffer, ifd);
           if (ifd.width && ifd.height) {
             width = ifd.width;
             height = ifd.height;
-            console.log(`[TIFF] Got dimensions from decoded image: ${width}x${height}`);
           }
         } catch (e) {
-          console.warn('[TIFF] Failed to decode image for dimension detection:', e);
+          // Ignore decode errors for dimension detection
         }
       }
       
@@ -543,7 +544,6 @@ export class TIFFParser extends BaseFormatParser {
         if (config?.dimensions) {
           width = config.dimensions[0];
           height = config.dimensions[1];
-          console.log(`[TIFF] Using provided dimensions as fallback: ${width}x${height}`);
         }
         
         // If still no dimensions, throw error
@@ -586,25 +586,25 @@ export class TIFFParser extends BaseFormatParser {
       if (!ifd.data) {
         if (width && height && width > 0 && height > 0) {
           // Try to get compression info using multiple methods
-          const compression = manualTags.compression || this.getIFDTag(ifd, 259) || ifd.compression || (ifd as any).compression;
-          const photometric = manualTags.photometric || this.getIFDTag(ifd, 262) || ifd.photometric || (ifd as any).photometric;
-          const samplesPerPixel = manualTags.samplesPerPixel || this.getIFDTag(ifd, 277) || ifd.spp || (ifd as any).spp;
-          const bitsPerSample = manualTags.bitsPerSample || this.getIFDTag(ifd, 258) || ifd.bps || (ifd as any).bps;
-          const manualWidth = manualTags.width;
-          const manualHeight = manualTags.height;
+          const compression = selectedManualTags.compression || this.getIFDTag(ifd, 259) || ifd.compression || (ifd as any).compression;
+          const photometric = selectedManualTags.photometric || this.getIFDTag(ifd, 262) || ifd.photometric || (ifd as any).photometric;
+          const samplesPerPixel = selectedManualTags.samplesPerPixel || this.getIFDTag(ifd, 277) || ifd.spp || (ifd as any).spp;
+          const bitsPerSample = selectedManualTags.bitsPerSample || this.getIFDTag(ifd, 258) || ifd.bps || (ifd as any).bps;
+          const manualWidth = selectedManualTags.width;
+          const manualHeight = selectedManualTags.height;
           
           // If compression is 1 (uncompressed) and we have strip offsets, try manual decoding
-          const hasStripOffsets = manualTags.stripOffsets || stripOffsets;
-          const hasStripByteCounts = manualTags.stripByteCounts || stripByteCounts;
+          const hasStripOffsets = selectedManualTags.stripOffsets || stripOffsets;
+          const hasStripByteCounts = selectedManualTags.stripByteCounts || stripByteCounts;
           
           if (compression === 1 && hasStripOffsets && hasStripByteCounts && manualWidth && manualHeight) {
             console.debug('[TIFF] Attempting manual decode of uncompressed strip-based TIFF...');
             try {
-              const stripOffsetsToUse = manualTags.stripOffsets || stripOffsets;
-              const stripByteCountsToUse = manualTags.stripByteCounts || stripByteCounts;
+              const stripOffsetsToUse = selectedManualTags.stripOffsets || stripOffsets;
+              const stripByteCountsToUse = selectedManualTags.stripByteCounts || stripByteCounts;
               
               // Normalize bitsPerSample - ensure it's an array and values are reasonable
-              // bitsPerSample from manualTags might be wrong, so validate it
+              // bitsPerSample from selectedManualTags might be wrong, so validate it
               let normalizedBitsPerSample: number[] = [8, 8, 8]; // Default for RGB
               
               if (bitsPerSample) {
@@ -659,15 +659,12 @@ export class TIFFParser extends BaseFormatParser {
                   // Don't return empty ImageData - fall through to placeholder
                 } else {
                   // Successfully decoded - use the data
-                  const imageData = new ImageData(decodedData, manualWidth, manualHeight);
+                  // Create a new Uint8ClampedArray to ensure it has the correct buffer type
+                  const imageDataArray = new Uint8ClampedArray(decodedData);
+                  const imageData = new ImageData(imageDataArray, manualWidth, manualHeight);
                   
-                  console.log(`[TIFF] Successfully decoded uncompressed TIFF: ${manualWidth}x${manualHeight}`);
                   
                   // Update the dimensions in the config if they were provided but wrong
-                  if (config?.dimensions && 
-                      (config.dimensions[0] !== manualWidth || config.dimensions[1] !== manualHeight)) {
-                    console.log(`[TIFF] Updating dimensions from ${config.dimensions[0]}x${config.dimensions[1]} to ${manualWidth}x${manualHeight}`);
-                  }
                   
                   return new MemoryTileSource({
                     imageData: imageData,
@@ -707,7 +704,6 @@ export class TIFFParser extends BaseFormatParser {
             ctx.putImageData(imageData, 0, 0);
             const imageBitmap = await createImageBitmap(canvas);
             
-            console.log(`[TIFF] Created placeholder image: ${width}x${height}, bitmap size: ${imageBitmap.width}x${imageBitmap.height}`);
             
             return new MemoryTileSource({
               imageData: imageBitmap,
@@ -770,7 +766,7 @@ export class TIFFParser extends BaseFormatParser {
       if (bytesPerPixel === 1) {
         // Grayscale: G -> RGBA (G, G, G, 255)
         for (let i = 0; i < totalPixels; i++) {
-          const gray = sourceData[i];
+          const gray = sourceData[i] ?? 0;
           rgbaData[i * 4] = gray;     // R
           rgbaData[i * 4 + 1] = gray; // G
           rgbaData[i * 4 + 2] = gray; // B
@@ -779,8 +775,8 @@ export class TIFFParser extends BaseFormatParser {
       } else if (bytesPerPixel === 2) {
         // Grayscale + Alpha: GA -> RGBA (G, G, G, A)
         for (let i = 0; i < totalPixels; i++) {
-          const gray = sourceData[i * 2];
-          const alpha = sourceData[i * 2 + 1];
+          const gray = sourceData[i * 2] ?? 0;
+          const alpha = sourceData[i * 2 + 1] ?? 255;
           rgbaData[i * 4] = gray;     // R
           rgbaData[i * 4 + 1] = gray; // G
           rgbaData[i * 4 + 2] = gray; // B
@@ -789,9 +785,9 @@ export class TIFFParser extends BaseFormatParser {
       } else if (bytesPerPixel === 3) {
         // RGB: RGB -> RGBA (R, G, B, 255)
         for (let i = 0; i < totalPixels; i++) {
-          rgbaData[i * 4] = sourceData[i * 3];     // R
-          rgbaData[i * 4 + 1] = sourceData[i * 3 + 1]; // G
-          rgbaData[i * 4 + 2] = sourceData[i * 3 + 2]; // B
+          rgbaData[i * 4] = sourceData[i * 3] ?? 0;     // R
+          rgbaData[i * 4 + 1] = sourceData[i * 3 + 1] ?? 0; // G
+          rgbaData[i * 4 + 2] = sourceData[i * 3 + 2] ?? 0; // B
           rgbaData[i * 4 + 3] = 255;              // A
         }
       } else if (bytesPerPixel === 4) {
@@ -838,11 +834,11 @@ export class TIFFParser extends BaseFormatParser {
   }
 
   /**
-   * Manually read standard TIFF tags from raw IFD entries
-   * This is needed for OME-TIFF files where UTIF might not expose standard tags
+   * Walk the entire IFD chain and return all IFDs with their tags
+   * This is essential for BigTIFF files where UTIF may not find all IFDs
    */
-  private readTIFFTags(arrayBuffer: ArrayBuffer, ifd: any): Record<string, any> {
-    const tags: Record<string, any> = {};
+  private walkAllIFDs(arrayBuffer: ArrayBuffer): Array<Record<string, any>> {
+    const allIFDs: Array<Record<string, any>> = [];
     
     try {
       const view = new DataView(arrayBuffer);
@@ -854,61 +850,100 @@ export class TIFFParser extends BaseFormatParser {
       const isBigEndian = byte0 === 0x4d && byte1 === 0x4d;
       
       if (!isLittleEndian && !isBigEndian) {
-        return tags;
+        console.warn('[TIFF] Invalid byte order');
+        return allIFDs;
       }
       
       // Read magic number
       const magic = view.getUint16(2, isLittleEndian);
       if (magic !== 42 && magic !== 43) {
-        return tags;
+        console.warn('[TIFF] Invalid magic number:', magic);
+        return allIFDs;
       }
       
       const isBigTIFF = magic === 43;
       
-      // Get IFD offset
+      // Get first IFD offset
       let ifdOffset: number;
       if (isBigTIFF) {
-        // BigTIFF: offset is at bytes 8-15 (64-bit)
-        // For now, try reading as 32-bit (many BigTIFF files still use 32-bit offsets)
-        ifdOffset = view.getUint32(8, isLittleEndian);
-        // If that seems wrong, try reading as two 32-bit values
-        if (ifdOffset === 0 || ifdOffset > arrayBuffer.byteLength) {
-          const low = view.getUint32(8, isLittleEndian);
-          const high = view.getUint32(12, isLittleEndian);
-          // For most files, high will be 0, so low is the offset
-          ifdOffset = high === 0 ? low : 0;
+        // BigTIFF header: bytes 4-5 = offset size (should be 8), bytes 6-7 = always 0
+        // bytes 8-15 = first IFD offset (64-bit)
+        const offsetSize = view.getUint16(4, isLittleEndian);
+        if (offsetSize !== 8) {
+          console.warn('[TIFF] Unexpected BigTIFF offset size:', offsetSize);
         }
+        // Read 64-bit offset
+        const low = view.getUint32(8, isLittleEndian);
+        const high = view.getUint32(12, isLittleEndian);
+        ifdOffset = high === 0 ? low : low; // For files < 4GB, high will be 0
       } else {
         ifdOffset = view.getUint32(4, isLittleEndian);
       }
       
-      if (ifdOffset === 0 || ifdOffset >= arrayBuffer.byteLength) {
-        console.warn('[TIFF] Invalid IFD offset:', ifdOffset);
-        return tags;
+      // Walk the IFD chain
+      let ifdIndex = 0;
+      const maxIFDs = 100; // Safety limit
+      
+      while (ifdOffset !== 0 && ifdOffset < arrayBuffer.byteLength && ifdIndex < maxIFDs) {
+        const ifdTags = this.readIFDAtOffset(view, ifdOffset, isLittleEndian, isBigTIFF, arrayBuffer.byteLength);
+        if (!ifdTags) break;
+        
+        ifdTags.ifdIndex = ifdIndex;
+        allIFDs.push(ifdTags);
+        
+        // Get next IFD offset
+        ifdOffset = ifdTags._nextIFDOffset || 0;
+        ifdIndex++;
       }
       
+      
+    } catch (error) {
+      console.error('[TIFF] Error walking IFD chain:', error);
+    }
+    
+    return allIFDs;
+  }
+
+  /**
+   * Read tags from a single IFD at the given offset
+   */
+  private readIFDAtOffset(
+    view: DataView,
+    ifdOffset: number,
+    isLittleEndian: boolean,
+    isBigTIFF: boolean,
+    bufferLength: number
+  ): Record<string, any> | null {
+    const tags: Record<string, any> = {};
+    
+    try {
       // Read number of directory entries
       let entryCount: number;
       let entrySize: number;
+      let entriesStart: number;
+      
       if (isBigTIFF) {
-        entryCount = Number(view.getUint32(ifdOffset, isLittleEndian));
+        // BigTIFF: 8-byte entry count
+        const countLow = view.getUint32(ifdOffset, isLittleEndian);
+        const countHigh = view.getUint32(ifdOffset + 4, isLittleEndian);
+        entryCount = countHigh === 0 ? countLow : countLow;
         entrySize = 20; // BigTIFF entries are 20 bytes
+        entriesStart = ifdOffset + 8;
       } else {
         entryCount = view.getUint16(ifdOffset, isLittleEndian);
         entrySize = 12; // Standard TIFF entries are 12 bytes
+        entriesStart = ifdOffset + 2;
       }
       
-      if (entryCount === 0 || entryCount > 1000) {
-        console.warn('[TIFF] Invalid entry count:', entryCount);
-        return tags;
+      if (entryCount === 0 || entryCount > 10000) {
+        console.warn(`[TIFF] Invalid entry count at offset ${ifdOffset}:`, entryCount);
+        return null;
       }
       
       // Read each IFD entry
       for (let i = 0; i < entryCount; i++) {
-        const entryStart = ifdOffset + (isBigTIFF ? 8 : 2) + (i * entrySize);
-        if (entryStart + entrySize > arrayBuffer.byteLength) {
-          break;
-        }
+        const entryStart = entriesStart + (i * entrySize);
+        if (entryStart + entrySize > bufferLength) break;
         
         const tag = view.getUint16(entryStart, isLittleEndian);
         const type = view.getUint16(entryStart + 2, isLittleEndian);
@@ -916,107 +951,112 @@ export class TIFFParser extends BaseFormatParser {
         let valueOffset: number;
         
         if (isBigTIFF) {
-          count = Number(view.getUint32(entryStart + 4, isLittleEndian));
-          // BigTIFF value offset is 64-bit, but we'll read as 32-bit for now
-          valueOffset = view.getUint32(entryStart + 12, isLittleEndian);
+          // BigTIFF: 8-byte count, 8-byte value/offset
+          const countLow = view.getUint32(entryStart + 4, isLittleEndian);
+          count = countLow; // Assume count fits in 32 bits
+          
+          // Value offset is at entry + 12 (8 bytes)
+          const valueLow = view.getUint32(entryStart + 12, isLittleEndian);
+          valueOffset = valueLow;
         } else {
           count = view.getUint32(entryStart + 4, isLittleEndian);
           valueOffset = view.getUint32(entryStart + 8, isLittleEndian);
         }
         
-        // Read tag value based on type and count
+        // Calculate value size based on type
+        const typeSizes: Record<number, number> = {
+          1: 1,  // BYTE
+          2: 1,  // ASCII
+          3: 2,  // SHORT
+          4: 4,  // LONG
+          5: 8,  // RATIONAL
+          6: 1,  // SBYTE
+          7: 1,  // UNDEFINED
+          8: 2,  // SSHORT
+          9: 4,  // SLONG
+          10: 8, // SRATIONAL
+          11: 4, // FLOAT
+          12: 8, // DOUBLE
+          16: 8, // LONG8 (BigTIFF)
+          17: 8, // SLONG8 (BigTIFF)
+          18: 8, // IFD8 (BigTIFF)
+        };
+        
+        const typeSize = typeSizes[type] || 1;
+        const totalSize = typeSize * count;
+        const inlineThreshold = isBigTIFF ? 8 : 4;
+        
+        // Determine where to read the value from
+        let valuePosition: number;
+        if (totalSize <= inlineThreshold) {
+          // Value is inline in the entry
+          valuePosition = entryStart + (isBigTIFF ? 12 : 8);
+        } else {
+          // Value is at the offset
+          valuePosition = valueOffset;
+        }
+        
+        // Read the value
         let value: any = null;
         
         if (count === 1) {
-          if (type === 1) { // BYTE
-            value = view.getUint8(entryStart + (isBigTIFF ? 12 : 8));
-          } else if (type === 3) { // SHORT
-            value = view.getUint16(entryStart + (isBigTIFF ? 12 : 8), isLittleEndian);
+          if (type === 3) { // SHORT
+            value = view.getUint16(valuePosition, isLittleEndian);
           } else if (type === 4) { // LONG
-            value = view.getUint32(entryStart + (isBigTIFF ? 12 : 8), isLittleEndian);
+            value = view.getUint32(valuePosition, isLittleEndian);
+          } else if (type === 16) { // LONG8
+            value = view.getUint32(valuePosition, isLittleEndian); // Lower 32 bits
           }
-        } else if (count > 1 && valueOffset < arrayBuffer.byteLength) {
-          // Value is stored at offset
-          // For strip/tile offsets and byte counts, we need to read large arrays
-          const maxArraySize = 10000; // Reasonable limit
-          if (type === 3 && count <= maxArraySize) { // SHORT array (16-bit)
+        } else if (count > 1 && valuePosition < bufferLength) {
+          const maxArraySize = 50000;
+          if ((type === 3 || type === 4 || type === 16) && count <= maxArraySize) {
             value = [];
-            for (let j = 0; j < count; j++) {
-              const offset = valueOffset + j * 2;
-              if (offset + 2 <= arrayBuffer.byteLength) {
-                value.push(view.getUint16(offset, isLittleEndian));
+            for (let j = 0; j < count && valuePosition + j * typeSize < bufferLength; j++) {
+              const pos = valuePosition + j * typeSize;
+              if (type === 3) {
+                value.push(view.getUint16(pos, isLittleEndian));
+              } else if (type === 4) {
+                value.push(view.getUint32(pos, isLittleEndian));
+              } else if (type === 16) {
+                value.push(view.getUint32(pos, isLittleEndian)); // Lower 32 bits
               }
-            }
-          } else if (type === 4 && count <= maxArraySize) { // LONG array (32-bit)
-            value = [];
-            for (let j = 0; j < count; j++) {
-              const offset = valueOffset + j * 4;
-              if (offset + 4 <= arrayBuffer.byteLength) {
-                value.push(view.getUint32(offset, isLittleEndian));
-              }
-            }
-          } else if (type === 16 && count <= maxArraySize) { // LONG8 array (64-bit, BigTIFF)
-            value = [];
-            for (let j = 0; j < count; j++) {
-              const offset = valueOffset + j * 8;
-              if (offset + 8 <= arrayBuffer.byteLength) {
-                // Read 64-bit value as two 32-bit values
-                const low = view.getUint32(offset, isLittleEndian);
-                const high = view.getUint32(offset + 4, isLittleEndian);
-                // For most files, high will be 0, so we can use low as the offset
-                // If high is non-zero, we'd need BigInt, but for file offsets it's usually safe to use low
-                if (high === 0) {
-                  value.push(low);
-                } else {
-                  // If high is non-zero, the offset is > 4GB, which is unlikely but possible
-                  // For now, use low and warn
-                  console.warn(`[TIFF] Tag ${tag} has 64-bit offset > 4GB at index ${j}, using low 32 bits`);
-                  value.push(low);
-                }
-              }
-            }
-          } else if (count > maxArraySize) {
-            console.warn(`[TIFF] Tag ${tag} has very large array (${count} elements), skipping`);
-          } else {
-            // These are informational tags (strings, metadata) that don't affect image rendering
-            // Type 1 = BYTE (e.g., XMP metadata tag 700)
-            // Type 2 = ASCII (e.g., ImageDescription 270, Software 305, DateTime 306)
-            // We don't need to read these for rendering, so suppress the warning
-            const informationalTags = [270, 305, 306, 700]; // ImageDescription, Software, DateTime, XMP
-            if (!informationalTags.includes(tag)) {
-              // Only warn for tags we might actually need
-              console.debug(`[TIFF] Tag ${tag} has unsupported type ${type} for array reading (informational, safe to ignore)`);
             }
           }
         }
         
-        // Store standard tags we care about
-        if (tag === 256) tags.width = value; // ImageWidth
-        else if (tag === 257) tags.height = value; // ImageLength
-        else if (tag === 259) tags.compression = value; // Compression
-        else if (tag === 262) tags.photometric = value; // PhotometricInterpretation
-        else if (tag === 258) tags.bitsPerSample = value; // BitsPerSample
-        else if (tag === 277) tags.samplesPerPixel = value; // SamplesPerPixel
-        else if (tag === 273) { // StripOffsets
-          tags.stripOffsets = value;
-          if (value === null && count > 1) {
-            console.log(`[TIFF] Tag 273 (StripOffsets): type=${type}, count=${count}, valueOffset=${valueOffset}, value=${value}`);
-          }
-        } else if (tag === 279) { // StripByteCounts
-          tags.stripByteCounts = value;
-          if (value === null && count > 1) {
-            console.log(`[TIFF] Tag 279 (StripByteCounts): type=${type}, count=${count}, valueOffset=${valueOffset}, value=${value}`);
-          }
-        } else if (tag === 322) tags.tileWidth = value; // TileWidth
-        else if (tag === 323) tags.tileHeight = value; // TileLength
-        else if (tag === 324) tags.tileOffsets = value; // TileOffsets
-        else if (tag === 325) tags.tileByteCounts = value; // TileByteCounts
+        // Store tags we care about
+        if (tag === 256) tags.width = value;
+        else if (tag === 257) tags.height = value;
+        else if (tag === 259) tags.compression = value;
+        else if (tag === 262) tags.photometric = value;
+        else if (tag === 258) tags.bitsPerSample = value;
+        else if (tag === 277) tags.samplesPerPixel = value;
+        else if (tag === 273) tags.stripOffsets = value;
+        else if (tag === 279) tags.stripByteCounts = value;
+        else if (tag === 322) tags.tileWidth = value;
+        else if (tag === 323) tags.tileHeight = value;
+        else if (tag === 324) tags.tileOffsets = value;
+        else if (tag === 325) tags.tileByteCounts = value;
       }
+      
+      // Read next IFD offset (at end of entries)
+      const nextOffsetPos = entriesStart + (entryCount * entrySize);
+      if (nextOffsetPos + (isBigTIFF ? 8 : 4) <= bufferLength) {
+        if (isBigTIFF) {
+          const low = view.getUint32(nextOffsetPos, isLittleEndian);
+          const high = view.getUint32(nextOffsetPos + 4, isLittleEndian);
+          tags._nextIFDOffset = high === 0 ? low : 0; // Skip >4GB offsets for now
+        } else {
+          tags._nextIFDOffset = view.getUint32(nextOffsetPos, isLittleEndian);
+        }
+      }
+      
+      return tags;
+      
     } catch (error) {
-      console.warn('[TIFF] Error reading tags manually:', error);
+      console.error(`[TIFF] Error reading IFD at offset ${ifdOffset}:`, error);
+      return null;
     }
-    
-    return tags;
   }
 
   /**
@@ -1030,11 +1070,12 @@ export class TIFFParser extends BaseFormatParser {
     height: number,
     samplesPerPixel: number,
     bitsPerSample: number | number[],
-    photometric: number
+    _photometric: number  // Reserved for future photometric interpretation handling
   ): Uint8ClampedArray | null {
     try {
       const view = new DataView(arrayBuffer);
-      const isLittleEndian = view.getUint8(0) === 0x49 && view.getUint8(1) === 0x49;
+      // Note: isLittleEndian could be used for 16-bit value decoding in future
+      // const isLittleEndian = view.getUint8(0) === 0x49 && view.getUint8(1) === 0x49;
       
       const offsets = Array.isArray(stripOffsets) ? stripOffsets : [stripOffsets];
       const counts = Array.isArray(stripByteCounts) ? stripByteCounts : [stripByteCounts];
@@ -1056,6 +1097,12 @@ export class TIFFParser extends BaseFormatParser {
       for (let i = 0; i < offsets.length && row < height; i++) {
         const offset = offsets[i];
         const byteCount = counts[i];
+        
+        if (offset === undefined || byteCount === undefined) {
+          console.warn(`[TIFF] Strip ${i} has undefined offset or byteCount`);
+          continue;
+        }
+        
         const stripHeight = Math.floor(byteCount / (width * bytesPerPixel));
         
         if (offset + byteCount > arrayBuffer.byteLength) {
@@ -1152,8 +1199,8 @@ export class TIFFParser extends BaseFormatParser {
       
       if (isBigTIFF) {
         // BigTIFF uses 64-bit offsets - more complex to parse
-        // The readTIFFTags method handles BigTIFF better, so we skip manual dimension parsing
-        console.debug('[TIFF] BigTIFF format detected, manual dimension parser not fully supported (use readTIFFTags instead)');
+        // The walkAllIFDs method handles BigTIFF better, so we skip manual dimension parsing
+        console.debug('[TIFF] BigTIFF format detected, manual dimension parser not fully supported (use walkAllIFDs instead)');
         return null;
       }
       
@@ -1227,7 +1274,6 @@ export class TIFFParser extends BaseFormatParser {
       }
       
       if (width && height && width > 0 && height > 0) {
-        console.log('[TIFF] Successfully read dimensions from header:', width, 'x', height);
         return [width, height];
       }
       

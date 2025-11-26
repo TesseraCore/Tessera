@@ -2,7 +2,7 @@
  * Text wrapping utilities
  */
 
-export function wrapText(text: string, maxWidth: number) {
+export function wrapText(_text: string, _maxWidth: number) {
   // TODO: Implement text wrapping
 }
 
