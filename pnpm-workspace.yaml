@@ -12,7 +12,7 @@ catalog:
   "@vitest/coverage-v8": ^1.0.0
   
   # Type definitions
-  "@types/node": ^20.0.0
+  "@types/node": ^24.10.1
   
   # Build tools
   rolldown: ^1.0.0-beta.47
