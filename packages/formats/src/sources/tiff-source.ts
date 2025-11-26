@@ -58,7 +58,31 @@ export interface TIFFTileSourceOptions {
 }
 
 /**
+ * Pyramid level info for virtual pyramid generation
+ */
+interface PyramidLevel {
+  /** Level index (0 = full resolution) */
+  level: number;
+  /** Width at this level */
+  width: number;
+  /** Height at this level */
+  height: number;
+  /** Scale factor (1.0 for level 0, 0.5 for level 1, etc.) */
+  scale: number;
+  /** Number of tiles horizontally */
+  tilesAcross: number;
+  /** Number of tiles vertically */
+  tilesDown: number;
+  /** Cached downscaled image for this level (generated on-demand) */
+  bitmap?: ImageBitmap;
+}
+
+/**
  * TIFF tile source for tiled TIFF images
+ * 
+ * Supports virtual pyramid generation for smooth zooming:
+ * - Level 0: Native TIFF tiles at full resolution
+ * - Level 1+: Dynamically generated lower-resolution tiles
  */
 export class TIFFTileSource extends BaseTileSource {
   private arrayBuffer: ArrayBuffer;
@@ -70,7 +94,12 @@ export class TIFFTileSource extends BaseTileSource {
   private tileByteCounts: number[];
   private tilesAcross: number;
   private tilesDown: number;
+  
+  // Internal cache for level 0 tiles (needed to generate virtual pyramid tiles)
+  // Limited to prevent memory bloat - only caches level 0 tiles
   private tileCache = new Map<string, ImageBitmap>();
+  private maxCachedTiles = 32; // Limit internal cache size
+  private tileAccessOrder: string[] = []; // LRU tracking
   
   // Compression and color settings
   private compression: number;
@@ -78,6 +107,9 @@ export class TIFFTileSource extends BaseTileSource {
   private samplesPerPixel: number;
   private bitsPerSample: number | number[];
   private predictor: number;
+  
+  // Virtual pyramid for smooth zooming
+  private levels: PyramidLevel[] = [];
 
   constructor(options: TIFFTileSourceOptions) {
     super(Math.max(options.tileWidth, options.tileHeight));
@@ -98,20 +130,113 @@ export class TIFFTileSource extends BaseTileSource {
     this.bitsPerSample = options.bitsPerSample ?? 8;
     this.predictor = options.predictor ?? 1;
     
+    // Initialize virtual pyramid levels
+    this.initializePyramid();
+    
     // Log tile source summary
     const compressionInfo = this.compression !== TIFFCompression.None 
       ? `, ${getCompressionName(this.compression)}${!isCompressionSupported(this.compression) ? ' ⚠️' : ''}`
       : '';
-    console.info(`[TIFF] 🖼️ ${this.width}×${this.height} | ${this.tilesAcross}×${this.tilesDown} tiles (${this.tileWidth}×${this.tileHeight} each)${compressionInfo}`);
+    console.info(`[TIFF] 🖼️ ${this.width}×${this.height} | ${this.tilesAcross}×${this.tilesDown} tiles (${this.tileWidth}×${this.tileHeight} each)${compressionInfo} | ${this.levels.length} pyramid levels`);
+  }
+  
+  /**
+   * Initialize virtual pyramid level structure
+   * Creates enough levels so the smallest fits in roughly one tile
+   */
+  private initializePyramid(): void {
+    const minDimension = Math.min(this.width, this.height);
+    
+    // Calculate how many levels we need (enough so smallest fits in ~1-2 tiles)
+    const levelCount = Math.max(1, Math.ceil(Math.log2(minDimension / this.tileSize)) + 1);
+    
+    this.levels = [];
+    for (let i = 0; i < levelCount; i++) {
+      const scale = 1 / Math.pow(2, i);
+      const levelWidth = Math.max(1, Math.ceil(this.width * scale));
+      const levelHeight = Math.max(1, Math.ceil(this.height * scale));
+      
+      this.levels.push({
+        level: i,
+        width: levelWidth,
+        height: levelHeight,
+        scale,
+        tilesAcross: Math.ceil(levelWidth / this.tileSize),
+        tilesDown: Math.ceil(levelHeight / this.tileSize),
+      });
+    }
   }
 
   async getTile(level: number, x: number, y: number): Promise<Tile | null> {
-    if (level !== 0) {
-      // Only support level 0 for now
+    const levelInfo = this.levels[level];
+    if (!levelInfo) {
       return null;
     }
-
-    // Validate tile coordinates
+    
+    // Validate tile coordinates for this level
+    if (x < 0 || x >= levelInfo.tilesAcross || y < 0 || y >= levelInfo.tilesDown) {
+      return null;
+    }
+    
+    // For level 0, load from native TIFF tiles (with internal caching)
+    if (level === 0) {
+      return this.loadNativeTile(x, y);
+    }
+    
+    // For higher levels, generate virtual tiles by downscaling
+    // Note: Virtual tiles are NOT cached internally - TileCache handles that
+    return this.generateVirtualTile(level, x, y);
+  }
+  
+  /**
+   * Add a tile to internal cache with LRU eviction
+   * Only used for level 0 tiles which are needed to generate virtual tiles
+   */
+  private addToInternalCache(key: string, bitmap: ImageBitmap): void {
+    // Remove from access order if already exists
+    const existingIndex = this.tileAccessOrder.indexOf(key);
+    if (existingIndex !== -1) {
+      this.tileAccessOrder.splice(existingIndex, 1);
+    }
+    
+    // Evict oldest tiles if at capacity
+    while (this.tileCache.size >= this.maxCachedTiles && this.tileAccessOrder.length > 0) {
+      const oldestKey = this.tileAccessOrder.shift();
+      if (oldestKey) {
+        const oldBitmap = this.tileCache.get(oldestKey);
+        if (oldBitmap) {
+          oldBitmap.close();
+        }
+        this.tileCache.delete(oldestKey);
+      }
+    }
+    
+    // Add new tile
+    this.tileCache.set(key, bitmap);
+    this.tileAccessOrder.push(key);
+  }
+  
+  /**
+   * Get a tile from internal cache, updating LRU order
+   */
+  private getFromInternalCache(key: string): ImageBitmap | undefined {
+    const bitmap = this.tileCache.get(key);
+    if (bitmap) {
+      // Update LRU order
+      const index = this.tileAccessOrder.indexOf(key);
+      if (index !== -1) {
+        this.tileAccessOrder.splice(index, 1);
+        this.tileAccessOrder.push(key);
+      }
+    }
+    return bitmap;
+  }
+  
+  /**
+   * Load a native TIFF tile (level 0)
+   */
+  private async loadNativeTile(x: number, y: number): Promise<Tile | null> {
+    // Validate tile coordinates for level 0
     if (x < 0 || x >= this.tilesAcross || y < 0 || y >= this.tilesDown) {
       return null;
     }
@@ -122,9 +247,9 @@ export class TIFFTileSource extends BaseTileSource {
       return null;
     }
 
-    // Check cache
-    const cacheKey = `${level}:${x}:${y}`;
-    let imageBitmap = this.tileCache.get(cacheKey);
+    // Check internal cache (level 0 tiles are cached for pyramid generation)
+    const cacheKey = `0:${x}:${y}`;
+    let imageBitmap = this.getFromInternalCache(cacheKey);
 
     if (!imageBitmap) {
       // Extract tile data from TIFF
@@ -266,15 +391,15 @@ export class TIFFTileSource extends BaseTileSource {
         ctx.putImageData(imageData, 0, 0);
         imageBitmap = await createImageBitmap(canvas);
 
-        // Cache the tile
-        this.tileCache.set(cacheKey, imageBitmap);
+        // Cache the level 0 tile (needed for virtual pyramid generation)
+        this.addToInternalCache(cacheKey, imageBitmap);
       } catch (error) {
         console.error(`[TIFFTileSource] Error decoding tile ${x},${y}:`, error);
         return null;
       }
     }
 
-    // Calculate tile position in image space
+    // Calculate tile position in image space (level 0 = full resolution)
     const imageX = x * this.tileWidth;
     const imageY = y * this.tileHeight;
     const actualTileWidth = Math.min(this.tileWidth, this.width - imageX);
@@ -294,17 +419,263 @@ export class TIFFTileSource extends BaseTileSource {
       lastAccess: Date.now(),
     };
   }
+  
+  /**
+   * Generate a virtual tile for levels > 0 by downscaling from level 0
+   */
+  private async generateVirtualTile(level: number, x: number, y: number): Promise<Tile | null> {
+    const levelInfo = this.levels[level];
+    if (!levelInfo) {
+      return null;
+    }
+    
+    // Calculate this tile's bounds in level coordinates
+    const levelTileX = x * this.tileSize;
+    const levelTileY = y * this.tileSize;
+    const tileWidth = Math.min(this.tileSize, levelInfo.width - levelTileX);
+    const tileHeight = Math.min(this.tileSize, levelInfo.height - levelTileY);
+    
+    if (tileWidth <= 0 || tileHeight <= 0) {
+      return null;
+    }
+    
+    // Calculate which level 0 tiles we need
+    // Each pixel in this level corresponds to 2^level pixels in level 0
+    const scaleFactor = Math.pow(2, level);
+    
+    // Bounds in level 0 pixel space
+    const level0MinX = levelTileX * scaleFactor;
+    const level0MinY = levelTileY * scaleFactor;
+    const level0MaxX = Math.min((levelTileX + tileWidth) * scaleFactor, this.width);
+    const level0MaxY = Math.min((levelTileY + tileHeight) * scaleFactor, this.height);
+    
+    // Calculate which level 0 tiles cover this area
+    const tile0MinX = Math.floor(level0MinX / this.tileWidth);
+    const tile0MaxX = Math.ceil(level0MaxX / this.tileWidth);
+    const tile0MinY = Math.floor(level0MinY / this.tileHeight);
+    const tile0MaxY = Math.ceil(level0MaxY / this.tileHeight);
+    
+    // Count how many tiles we'd need to load
+    const tilesNeeded = (tile0MaxX - tile0MinX) * (tile0MaxY - tile0MinY);
+    
+    // If too many tiles needed, generate from an intermediate level instead
+    // This prevents loading dozens of tiles to generate one low-res tile
+    const maxTilesPerVirtual = 16;
+    if (tilesNeeded > maxTilesPerVirtual && level > 1) {
+      // Try to generate from level-1 instead of level 0
+      return this.generateFromIntermediateLevel(level, x, y, levelInfo, tileWidth, tileHeight);
+    }
+    
+    // Create a canvas to composite the downscaled image
+    const canvas = new OffscreenCanvas(tileWidth, tileHeight);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return null;
+    }
+    
+    // Enable high-quality scaling (use 'medium' for faster initial load)
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'medium';
+    
+    // Build list of tiles to load
+    const tileCoords: Array<{ tx: number; ty: number }> = [];
+    for (let ty = tile0MinY; ty < tile0MaxY; ty++) {
+      for (let tx = tile0MinX; tx < tile0MaxX; tx++) {
+        tileCoords.push({ tx, ty });
+      }
+    }
+    
+    // Load tiles in parallel (limited concurrency)
+    const concurrency = Math.min(4, tileCoords.length);
+    const loadedTiles: Array<{ tile: Tile | null; tx: number; ty: number }> = [];
+    
+    for (let i = 0; i < tileCoords.length; i += concurrency) {
+      const batch = tileCoords.slice(i, i + concurrency);
+      const results = await Promise.all(
+        batch.map(async ({ tx, ty }) => ({
+          tile: await this.loadNativeTile(tx, ty),
+          tx,
+          ty,
+        }))
+      );
+      loadedTiles.push(...results);
+    }
+    
+    // Draw all loaded tiles
+    let hasAnyTile = false;
+    for (const { tile: sourceTile, tx, ty } of loadedTiles) {
+      if (!sourceTile || !sourceTile.imageBitmap) {
+        continue;
+      }
+      
+      hasAnyTile = true;
+      
+      // Calculate where this tile's pixels fall in our output
+      // Source tile position in level 0 pixels
+      const srcTileX = tx * this.tileWidth;
+      const srcTileY = ty * this.tileHeight;
+      
+      // What portion of the source tile do we need?
+      const srcStartX = Math.max(0, level0MinX - srcTileX);
+      const srcStartY = Math.max(0, level0MinY - srcTileY);
+      const srcEndX = Math.min(sourceTile.imageBitmap.width, level0MaxX - srcTileX);
+      const srcEndY = Math.min(sourceTile.imageBitmap.height, level0MaxY - srcTileY);
+      const srcWidth = srcEndX - srcStartX;
+      const srcHeight = srcEndY - srcStartY;
+      
+      if (srcWidth <= 0 || srcHeight <= 0) {
+        continue;
+      }
+      
+      // Where does this go in our output (in level N pixel space)?
+      const dstX = (srcTileX + srcStartX - level0MinX) / scaleFactor;
+      const dstY = (srcTileY + srcStartY - level0MinY) / scaleFactor;
+      const dstWidth = srcWidth / scaleFactor;
+      const dstHeight = srcHeight / scaleFactor;
+      
+      // Draw the portion of the source tile, scaled down
+      ctx.drawImage(
+        sourceTile.imageBitmap,
+        srcStartX, srcStartY, srcWidth, srcHeight,  // Source rect
+        dstX, dstY, dstWidth, dstHeight              // Dest rect
+      );
+    }
+    
+    if (!hasAnyTile) {
+      return null;
+    }
+    
+    // Create ImageBitmap from canvas
+    const imageBitmap = await createImageBitmap(canvas);
+    
+    // Note: Don't cache virtual tiles (level > 0) internally
+    // The TileCache in TileManager handles caching for all tiles
+    // We only cache level 0 tiles internally because they're needed
+    // to generate virtual tiles at higher levels
+    
+    // Convert to full-resolution image space
+    const imageX = levelTileX / levelInfo.scale;
+    const imageY = levelTileY / levelInfo.scale;
+    const imageWidth = tileWidth / levelInfo.scale;
+    const imageHeight = tileHeight / levelInfo.scale;
+    
+    return {
+      level,
+      x,
+      y,
+      width: imageWidth,
+      height: imageHeight,
+      imageX,
+      imageY,
+      imageBitmap,
+      loaded: true,
+      visible: false,
+      lastAccess: Date.now(),
+    };
+  }
+
+  /**
+   * Generate a virtual tile from an intermediate level (not level 0)
+   * This is faster when generating very low resolution tiles
+   */
+  private async generateFromIntermediateLevel(
+    level: number,
+    x: number,
+    y: number,
+    levelInfo: PyramidLevel,
+    tileWidth: number,
+    tileHeight: number
+  ): Promise<Tile | null> {
+    // Use level-1 as the source (recursively generates if needed)
+    const sourceLevel = level - 1;
+    const sourceLevelInfo = this.levels[sourceLevel];
+    if (!sourceLevelInfo) {
+      return null;
+    }
+    
+    // Calculate which tiles from sourceLevel we need
+    // Each tile at level N covers 2x2 tiles at level N-1
+    const sourceTileMinX = x * 2;
+    const sourceTileMaxX = Math.min(sourceTileMinX + 2, sourceLevelInfo.tilesAcross);
+    const sourceTileMinY = y * 2;
+    const sourceTileMaxY = Math.min(sourceTileMinY + 2, sourceLevelInfo.tilesDown);
+    
+    // Create canvas for output
+    const canvas = new OffscreenCanvas(tileWidth, tileHeight);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return null;
+    }
+    
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'medium';
+    
+    // Load source tiles (at most 4)
+    let hasAnyTile = false;
+    for (let sy = sourceTileMinY; sy < sourceTileMaxY; sy++) {
+      for (let sx = sourceTileMinX; sx < sourceTileMaxX; sx++) {
+        // Recursively get the source tile (may generate it)
+        const sourceTile = await this.getTile(sourceLevel, sx, sy);
+        if (!sourceTile || !sourceTile.imageBitmap) {
+          continue;
+        }
+        
+        hasAnyTile = true;
+        
+        // Calculate destination position
+        const dstX = (sx - sourceTileMinX) * (tileWidth / 2);
+        const dstY = (sy - sourceTileMinY) * (tileHeight / 2);
+        const dstW = tileWidth / 2;
+        const dstH = tileHeight / 2;
+        
+        ctx.drawImage(
+          sourceTile.imageBitmap,
+          0, 0, sourceTile.imageBitmap.width, sourceTile.imageBitmap.height,
+          dstX, dstY, dstW, dstH
+        );
+      }
+    }
+    
+    if (!hasAnyTile) {
+      return null;
+    }
+    
+    const imageBitmap = await createImageBitmap(canvas);
+    
+    // Convert to full-resolution image space
+    const levelTileX = x * this.tileSize;
+    const levelTileY = y * this.tileSize;
+    const imageX = levelTileX / levelInfo.scale;
+    const imageY = levelTileY / levelInfo.scale;
+    const imageWidth = tileWidth / levelInfo.scale;
+    const imageHeight = tileHeight / levelInfo.scale;
+    
+    return {
+      level,
+      x,
+      y,
+      width: imageWidth,
+      height: imageHeight,
+      imageX,
+      imageY,
+      imageBitmap,
+      loaded: true,
+      visible: false,
+      lastAccess: Date.now(),
+    };
+  }
 
   async getImageSize(): Promise<[number, number]> {
     return [this.width, this.height];
   }
 
   async getLevelCount(): Promise<number> {
-    return 1; // Only support single level for now
+    return this.levels.length;
   }
 
   async getTileSize(_level: number): Promise<[number, number]> {
-    return [this.tileWidth, this.tileHeight];
+    // All levels use the same tile size (virtual tiles are generated at this size)
+    return [this.tileSize, this.tileSize];
   }
 
   /**
@@ -327,5 +698,6 @@ export class TIFFTileSource extends BaseTileSource {
       bitmap.close();
     }
     this.tileCache.clear();
+    this.tileAccessOrder = [];
   }
 }

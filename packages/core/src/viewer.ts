@@ -316,12 +316,18 @@ export class Viewer extends EventEmitter<ViewerEvents> {
         const { createTileSource } = await import('@tessera/formats');
         const { TileManager } = await import('@tessera/rendering');
         
+        // Yield to UI before heavy TIFF parsing
+        await new Promise(resolve => setTimeout(resolve, 0));
+        
         // Use format parser to create tile source
         // The parser will handle TIFF decoding and other formats
         const tileSource = await createTileSource(source, {
           format: format,
           config: size ? { dimensions: size } : undefined,
         });
+        
+        // Yield to UI after parsing, before setting up rendering
+        await new Promise(resolve => setTimeout(resolve, 0));
         
         // Always get image size from tile source to ensure accuracy
         // The tile source knows the actual dimensions, which may differ from provided size
@@ -341,9 +347,9 @@ export class Viewer extends EventEmitter<ViewerEvents> {
           source: tileSource,
         });
         
-        // Wait for tile manager to initialize and preload the first tile
-        // This ensures tiles are available for the first render
-        await this.preloadInitialTiles();
+        // DON'T block on preloading - let the render loop handle it
+        // This prevents frame drops during initial load
+        // The first render will show a blank/loading state, then tiles appear progressively
       }
       
       // Fit the image to the viewport so it's fully visible and centered on load
@@ -441,35 +447,67 @@ export class Viewer extends EventEmitter<ViewerEvents> {
       
       // Render tiles if available
       if (this.tiles && this.backend.renderTiles) {
+        // Get visible tiles - this returns immediately with cached tiles
+        // Missing tiles are queued for async loading
         const visibleTiles = await this.tiles.getVisibleTiles(viewUniforms);
         
-        if (visibleTiles.length > 0) {
-          // Check for tiles without bitmaps (potential issue)
-          const tilesWithBitmaps = visibleTiles.filter(t => t.imageBitmap).length;
-          if (tilesWithBitmaps === 0 && this.options.debug) {
-            console.warn('[Viewer] No tiles have imageBitmaps - tiles may still be loading');
-          }
+        // Filter to only tiles that have bitmaps ready
+        const readyTiles = visibleTiles.filter(t => t.imageBitmap);
+        
+        if (readyTiles.length > 0) {
+          // Upload tiles to GPU - batch upload without blocking
+          // Only upload a limited number per frame to avoid frame drops
+          const maxUploadsPerFrame = 4;
+          let uploadsThisFrame = 0;
           
-          // Upload tiles to GPU if needed
-          for (const tile of visibleTiles) {
+          for (const tile of readyTiles) {
             if (tile.imageBitmap && this.backend.uploadTile && !tile.texture) {
-              await this.backend.uploadTile(tile);
+              if (uploadsThisFrame < maxUploadsPerFrame) {
+                // Upload synchronously (fast for small textures)
+                try {
+                  await this.backend.uploadTile(tile);
+                  uploadsThisFrame++;
+                } catch (uploadError) {
+                  // Continue rendering even if upload fails
+                  if (this.options.debug) {
+                    console.warn('[Viewer] Tile upload failed:', uploadError);
+                  }
+                }
+              }
+              // Remaining uploads will happen on next frame
             }
           }
           
-          // Render
-          if (this.backend.renderTiles) {
+          // Render only tiles that are uploaded
+          const renderableTiles = readyTiles.filter(t => t.texture || t.imageBitmap);
+          
+          if (renderableTiles.length > 0) {
             try {
-              const result = this.backend.renderTiles(visibleTiles, viewUniforms);
+              const result = this.backend.renderTiles(renderableTiles, viewUniforms);
               if (result instanceof Promise) {
                 await result;
+              }
+              
+              // Mark initial load complete after first successful render
+              if (this.tiles.markInitialLoadComplete) {
+                this.tiles.markInitialLoadComplete();
               }
             } catch (renderError) {
               console.error('[Viewer] Error in renderTiles:', renderError);
             }
-          } else {
-            console.warn('[Viewer] Backend does not have renderTiles method');
           }
+          
+          // If there are tiles still loading, schedule another render
+          if (readyTiles.length < visibleTiles.length) {
+            setTimeout(() => {
+              this.requestRender();
+            }, 16); // ~60fps
+          }
+        } else if (visibleTiles.length > 0) {
+          // Tiles requested but not ready yet - check again soon
+          setTimeout(() => {
+            this.requestRender();
+          }, 16);
         } else {
           // No tiles visible yet - they might be loading
           // Trigger another render after a short delay to check again
@@ -526,27 +564,8 @@ export class Viewer extends EventEmitter<ViewerEvents> {
     this.requestRender();
   }
 
-  /**
-   * Preload initial tiles to ensure they're available for first render
-   */
-  private async preloadInitialTiles(): Promise<void> {
-    if (!this.tiles) return;
-    
-    // Wait for tile manager to initialize (getImageSize completes)
-    let retries = 0;
-    while (!this.tiles.getImageSize() && retries < 50) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-      retries++;
-    }
-    
-    // Trigger initial tile load by calling getVisibleTiles
-    // This will queue tiles for loading
-    const viewUniforms = this.viewport.getViewUniforms();
-    await this.tiles.getVisibleTiles(viewUniforms);
-    
-    // Wait a bit for tiles to load
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
+  // preloadInitialTiles removed - blocking preload caused frame drops
+  // Tiles are now loaded progressively by the render loop
 
   /**
    * Update internal state from viewport

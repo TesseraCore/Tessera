@@ -28,6 +28,10 @@ export interface TileManagerOptions {
   prefetchMargin?: number;
   /** Enable tile prefetching */
   enablePrefetch?: boolean;
+  /** Enable prefetching of adjacent zoom levels (default: true) */
+  enableLevelPrefetch?: boolean;
+  /** Number of adjacent levels to prefetch (default: 1) */
+  levelPrefetchRange?: number;
 }
 
 /**
@@ -58,6 +62,8 @@ export class TileManager {
   private progressiveLoading: boolean;
   private enablePrefetch: boolean;
   private prefetchMargin: number;
+  private enableLevelPrefetch: boolean;
+  private levelPrefetchRange: number;
   
   // Track last viewport for prefetching
   private lastViewportCenter: [number, number] = [0, 0];
@@ -65,6 +71,24 @@ export class TileManager {
   // Track last logged state to avoid repetitive logging
   private lastLoggedLevel: number = -1;
   private lastLoggedTileCount: number = -1;
+  
+  // Track zoom direction for predictive prefetching
+  private lastZoom = 1.0;
+  private zoomDirection: 'in' | 'out' | 'stable' = 'stable';
+  
+  // Track current level for cache optimization
+  private currentLevel = 0;
+  
+  // Initial load optimization
+  private isInitialLoad = true;
+  private initialLoadStartTime = 0;
+  private hasDisplayedFirstTile = false;
+  
+  // Cache tile sizes to avoid async calls in render loop
+  private cachedTileSizes = new Map<number, [number, number]>();
+  
+  // Deferred queue processing to avoid blocking render frames
+  private queueProcessingScheduled = false;
 
   constructor(options: TileManagerOptions) {
     this.source = options.source;
@@ -73,6 +97,8 @@ export class TileManager {
     this.progressiveLoading = options.progressiveLoading ?? true;
     this.enablePrefetch = options.enablePrefetch ?? true;
     this.prefetchMargin = options.prefetchMargin ?? 1;
+    this.enableLevelPrefetch = options.enableLevelPrefetch ?? true;
+    this.levelPrefetchRange = options.levelPrefetchRange ?? 1;
     
     this.init();
   }
@@ -82,6 +108,7 @@ export class TileManager {
    */
   private async init(): Promise<void> {
     try {
+      this.initialLoadStartTime = Date.now();
       this.imageSize = await this.source.getImageSize();
       this.levelCount = await this.source.getLevelCount();
     } catch (error) {
@@ -108,21 +135,15 @@ export class TileManager {
    * 
    * Returns tiles that should be rendered, using progressive loading
    * to show lower-res tiles while higher-res loads.
+   * 
+   * IMPORTANT: This method returns immediately with cached tiles only.
+   * Missing tiles are queued for async loading and will appear in subsequent calls.
    */
   async getVisibleTiles(view: ViewUniforms): Promise<Tile[]> {
-    // Ensure init has completed
+    // Ensure init has completed - but don't block if not ready
     if (!this.imageSize) {
-      // Try to initialize if not done yet
-      try {
-        this.imageSize = await this.source.getImageSize();
-        this.levelCount = await this.source.getLevelCount();
-      } catch (error) {
-        console.error('Failed to get image info:', error);
-        return [];
-      }
-    }
-    
-    if (!this.imageSize) {
+      // Return empty if not initialized yet
+      // Init happens asynchronously
       return [];
     }
 
@@ -133,9 +154,20 @@ export class TileManager {
     const zoom = this.estimateZoom(view);
     const targetLevel = this.selectLevel(zoom);
     
-    // Get tile size at target level
-    const tileSize = await this.source.getTileSize(targetLevel);
+    // Track zoom direction for predictive prefetching
+    this.updateZoomTracking(zoom, targetLevel);
+    
+    // Get tile size - use cached value if available to avoid async
+    const defaultTileSize = 256;
+    const tileSize = this.cachedTileSizes.get(targetLevel) ?? [defaultTileSize, defaultTileSize];
     const [tileWidth, tileHeight] = tileSize;
+    
+    // Async fetch tile size for next frame (don't block current frame)
+    if (!this.cachedTileSizes.has(targetLevel)) {
+      this.source.getTileSize(targetLevel).then(size => {
+        this.cachedTileSizes.set(targetLevel, size);
+      });
+    }
     
     // Calculate scale factor for this level
     const levelScale = Math.pow(2, targetLevel);
@@ -179,20 +211,39 @@ export class TileManager {
     
     for (let y = tileMinY; y < tileMaxY; y++) {
       for (let x = tileMinX; x < tileMaxX; x++) {
-        // Check cache first
-        let tile = this.cache.get(targetLevel, x, y);
+        const tileKey = `${targetLevel}:${x}:${y}`;
+        
+        // Check if tile is currently loading (don't count as cache miss)
+        const isLoading = this.loadingTiles.has(tileKey);
+        
+        // Check cache - use has() first to avoid counting loading tiles as misses
+        let tile: Tile | null = null;
+        if (!isLoading) {
+          tile = this.cache.get(targetLevel, x, y);
+        } else {
+          // For loading tiles, peek at cache without affecting hit/miss stats
+          tile = this.cache.peek(targetLevel, x, y);
+        }
         
         if (tile && tile.imageBitmap) {
           // Have the tile at target level
           tile.visible = true;
           this.cache.setVisible(targetLevel, x, y, true);
           visibleTiles.push(tile);
-        } else {
-          // Need to load this tile
-          const priority = this.calculatePriority(x, y, false);
+        } else if (!isLoading) {
+          // Need to load this tile (only if not already loading)
+          const priority = this.calculatePriority(x, y, false, targetLevel);
           tilesToLoad.push({ level: targetLevel, x, y, priority, isPrefetch: false });
           
           // Progressive loading: try to find a fallback tile from a lower-res level
+          if (this.progressiveLoading) {
+            const fallbackTile = this.findFallbackTile(targetLevel, x, y, levelScale);
+            if (fallbackTile) {
+              visibleTiles.push(fallbackTile);
+            }
+          }
+        } else {
+          // Tile is loading - try fallback in the meantime
           if (this.progressiveLoading) {
             const fallbackTile = this.findFallbackTile(targetLevel, x, y, levelScale);
             if (fallbackTile) {
@@ -203,8 +254,11 @@ export class TileManager {
       }
     }
     
+    // During initial load, skip prefetching to prioritize visible tiles
+    const shouldPrefetch = !this.isInitialLoad || this.hasDisplayedFirstTile;
+    
     // Add prefetch tiles (tiles just outside viewport)
-    if (this.enablePrefetch) {
+    if (this.enablePrefetch && shouldPrefetch) {
       const prefetchTiles = this.getPrefetchTiles(
         targetLevel, tileMinX, tileMaxX, tileMinY, tileMaxY,
         Math.ceil(levelImageWidth / tileWidth),
@@ -213,13 +267,25 @@ export class TileManager {
       tilesToLoad.push(...prefetchTiles);
     }
     
+    // Add adjacent level prefetch for smooth zoom transitions
+    // Skip during initial load to get first frame displayed faster
+    if (this.enableLevelPrefetch && shouldPrefetch) {
+      const levelPrefetchTiles = this.getAdjacentLevelPrefetchTiles(
+        targetLevel, 
+        levelBounds,
+        levelScale
+      );
+      tilesToLoad.push(...levelPrefetchTiles);
+    }
+    
     // Queue tiles for loading with priority
     for (const request of tilesToLoad) {
       this.queueTile(request);
     }
     
-    // Process loading queue
-    this.processQueue();
+    // Process loading queue OUTSIDE the render frame
+    // This prevents tile decoding from blocking the frame
+    this.scheduleQueueProcessing();
     
     return visibleTiles;
   }
@@ -331,10 +397,134 @@ export class TileManager {
   }
 
   /**
+   * Track zoom direction and update cache active level
+   */
+  private updateZoomTracking(zoom: number, targetLevel: number): void {
+    // Detect zoom direction
+    const zoomDelta = zoom - this.lastZoom;
+    const zoomThreshold = 0.01; // Small threshold to filter noise
+    
+    if (zoomDelta > zoomThreshold) {
+      this.zoomDirection = 'in';
+    } else if (zoomDelta < -zoomThreshold) {
+      this.zoomDirection = 'out';
+    } else {
+      this.zoomDirection = 'stable';
+    }
+    
+    this.lastZoom = zoom;
+    
+    // Track level changes
+    if (targetLevel !== this.currentLevel) {
+      this.currentLevel = targetLevel;
+    }
+    
+    // Notify cache of active level for smarter eviction
+    this.cache.setActiveLevel(targetLevel);
+  }
+
+  /**
+   * Get tiles from adjacent levels to prefetch for smooth zoom transitions
+   * 
+   * This prefetches tiles from levels N-1 and N+1 that cover the current viewport,
+   * prioritizing based on zoom direction (prefetch zoom-in level when zooming in, etc.)
+   */
+  private getAdjacentLevelPrefetchTiles(
+    currentLevel: number,
+    viewportBounds: { minX: number; maxX: number; minY: number; maxY: number },
+    _currentLevelScale: number
+  ): TileRequest[] {
+    const prefetchTiles: TileRequest[] = [];
+    
+    // Determine which adjacent levels to prefetch based on zoom direction
+    const levelsToFetch: number[] = [];
+    
+    if (this.zoomDirection === 'in' && currentLevel > 0) {
+      // Zooming in: prioritize higher resolution (lower level number)
+      levelsToFetch.push(currentLevel - 1);
+      if (this.levelPrefetchRange > 1 && currentLevel < this.levelCount - 1) {
+        levelsToFetch.push(currentLevel + 1);
+      }
+    } else if (this.zoomDirection === 'out' && currentLevel < this.levelCount - 1) {
+      // Zooming out: prioritize lower resolution (higher level number)
+      levelsToFetch.push(currentLevel + 1);
+      if (this.levelPrefetchRange > 1 && currentLevel > 0) {
+        levelsToFetch.push(currentLevel - 1);
+      }
+    } else {
+      // Stable: prefetch both adjacent levels with equal priority
+      for (let offset = 1; offset <= this.levelPrefetchRange; offset++) {
+        if (currentLevel - offset >= 0) {
+          levelsToFetch.push(currentLevel - offset);
+        }
+        if (currentLevel + offset < this.levelCount) {
+          levelsToFetch.push(currentLevel + offset);
+        }
+      }
+    }
+    
+    // Get tiles for each adjacent level
+    for (const level of levelsToFetch) {
+      const levelDiff = level - currentLevel;
+      const relativeScale = Math.pow(2, levelDiff);
+      
+      // Convert viewport bounds to this level's coordinate space
+      const levelBounds = {
+        minX: viewportBounds.minX * relativeScale,
+        maxX: viewportBounds.maxX * relativeScale,
+        minY: viewportBounds.minY * relativeScale,
+        maxY: viewportBounds.maxY * relativeScale,
+      };
+      
+      // Get tile size for this level
+      // Note: We use the current level's tile size as an approximation
+      // since getTileSize is async and we want to keep this synchronous
+      const tileSize = 256; // Default tile size
+      
+      const tileMinX = Math.max(0, Math.floor(levelBounds.minX / tileSize));
+      const tileMaxX = Math.ceil(levelBounds.maxX / tileSize);
+      const tileMinY = Math.max(0, Math.floor(levelBounds.minY / tileSize));
+      const tileMaxY = Math.ceil(levelBounds.maxY / tileSize);
+      
+      // Limit the number of tiles to prefetch per level to avoid overloading
+      const maxTilesPerLevel = 4;
+      let tilesAdded = 0;
+      
+      for (let y = tileMinY; y < tileMaxY && tilesAdded < maxTilesPerLevel; y++) {
+        for (let x = tileMinX; x < tileMaxX && tilesAdded < maxTilesPerLevel; x++) {
+          // Check if already cached
+          if (this.cache.has(level, x, y)) {
+            continue;
+          }
+          
+          // Higher priority penalty for level prefetch (lower priority than viewport prefetch)
+          const basePriority = this.calculatePriority(
+            x * relativeScale, 
+            y * relativeScale, 
+            true
+          );
+          const levelPenalty = 500 + Math.abs(levelDiff) * 100;
+          
+          prefetchTiles.push({ 
+            level, 
+            x, 
+            y, 
+            priority: basePriority + levelPenalty, 
+            isPrefetch: true 
+          });
+          tilesAdded++;
+        }
+      }
+    }
+    
+    return prefetchTiles;
+  }
+
+  /**
    * Calculate loading priority for a tile
    * Lower number = higher priority
    */
-  private calculatePriority(x: number, y: number, isPrefetch: boolean): number {
+  private calculatePriority(x: number, y: number, isPrefetch: boolean, level?: number): number {
     // Distance from viewport center
     const dx = x - this.lastViewportCenter[0];
     const dy = y - this.lastViewportCenter[1];
@@ -343,7 +533,19 @@ export class TileManager {
     // Prefetch tiles have lower priority (higher number)
     const prefetchPenalty = isPrefetch ? 1000 : 0;
     
-    return distance + prefetchPenalty;
+    // During initial load, strongly prioritize lower resolution levels
+    // This gets SOMETHING on screen fast
+    let levelBonus = 0;
+    if (this.isInitialLoad && level !== undefined) {
+      // Higher levels (lower res) get priority boost during initial load
+      // Level 0 = no bonus, highest level = -500 (higher priority)
+      const maxLevel = this.levelCount - 1;
+      if (maxLevel > 0) {
+        levelBonus = -((level / maxLevel) * 500);
+      }
+    }
+    
+    return distance + prefetchPenalty + levelBonus;
   }
 
   /**
@@ -370,10 +572,52 @@ export class TileManager {
   }
 
   /**
+   * Schedule queue processing outside the current frame
+   * Uses requestIdleCallback when available, falls back to setTimeout
+   */
+  private scheduleQueueProcessing(): void {
+    if (this.queueProcessingScheduled || this.loadingQueue.length === 0) {
+      return;
+    }
+    
+    this.queueProcessingScheduled = true;
+    
+    // Use requestIdleCallback to process tiles when browser is idle
+    // This prevents tile decoding from blocking render frames
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(() => {
+        this.queueProcessingScheduled = false;
+        this.processQueue();
+      }, { timeout: 100 }); // Max delay 100ms
+    } else {
+      // Fallback: use setTimeout to defer to next event loop tick
+      setTimeout(() => {
+        this.queueProcessingScheduled = false;
+        this.processQueue();
+      }, 0);
+    }
+  }
+
+  /**
    * Process loading queue
+   * Only processes a limited number of tiles per call to avoid blocking
    */
   private async processQueue(): Promise<void> {
-    while (this.activeLoads < this.maxConcurrentLoads && this.loadingQueue.length > 0) {
+    // Limit concurrent loads more aggressively during initial load
+    // to prevent CPU overload during first display
+    const effectiveMaxLoads = this.isInitialLoad ? 
+      Math.min(2, this.maxConcurrentLoads) : 
+      this.maxConcurrentLoads;
+    
+    // Limit tiles started per processing cycle to avoid CPU spikes
+    const maxStartsPerCycle = this.isInitialLoad ? 1 : 2;
+    let startsThisCycle = 0;
+    
+    while (
+      this.activeLoads < effectiveMaxLoads && 
+      this.loadingQueue.length > 0 &&
+      startsThisCycle < maxStartsPerCycle
+    ) {
       const request = this.loadingQueue.shift();
       if (!request) break;
       
@@ -385,6 +629,7 @@ export class TileManager {
       }
       
       this.activeLoads++;
+      startsThisCycle++;
       
       const loadPromise = this.loadTile(request.level, request.x, request.y);
       this.loadingTiles.set(key, loadPromise);
@@ -393,8 +638,14 @@ export class TileManager {
         .finally(() => {
           this.activeLoads--;
           this.loadingTiles.delete(key);
-          this.processQueue(); // Continue processing
+          // Schedule more processing (deferred)
+          this.scheduleQueueProcessing();
         });
+    }
+    
+    // If there are more tiles to load, schedule another processing cycle
+    if (this.loadingQueue.length > 0 && this.activeLoads < this.maxConcurrentLoads) {
+      this.scheduleQueueProcessing();
     }
   }
 
@@ -407,6 +658,14 @@ export class TileManager {
       
       if (tile) {
         this.cache.set(tile);
+        
+        // Track initial load completion
+        if (this.isInitialLoad && !this.hasDisplayedFirstTile) {
+          this.hasDisplayedFirstTile = true;
+          const loadTime = Date.now() - this.initialLoadStartTime;
+          console.debug(`[TileManager] First tile displayed in ${loadTime}ms`);
+        }
+        
         return tile;
       }
     } catch (error) {
@@ -414,6 +673,17 @@ export class TileManager {
     }
     
     return null;
+  }
+  
+  /**
+   * Mark initial load as complete (call after first successful render)
+   */
+  markInitialLoadComplete(): void {
+    if (this.isInitialLoad) {
+      this.isInitialLoad = false;
+      const loadTime = Date.now() - this.initialLoadStartTime;
+      console.debug(`[TileManager] Initial load complete in ${loadTime}ms`);
+    }
   }
 
   /**

@@ -42,6 +42,10 @@ export interface CacheOptions {
   maxTiles?: number;
   /** Preferred levels to keep in cache (e.g., [0, 1] keeps high-res) */
   preferredLevels?: number[];
+  /** Number of recently visited levels to keep warm in cache (default: 3) */
+  warmLevelCount?: number;
+  /** Time in ms to consider a level "recently visited" (default: 30000) */
+  levelWarmDuration?: number;
 }
 
 /**
@@ -57,6 +61,12 @@ export class TileCache {
   // Index by level for faster level-based lookups
   private tilesByLevel = new Map<number, Set<string>>();
   
+  // Track recently visited levels to keep them warm
+  private levelAccessTimes = new Map<number, number>();
+  
+  // Current active level for smarter eviction
+  private currentLevel = 0;
+  
   private options: Required<CacheOptions>;
 
   constructor(options: CacheOptions = {}) {
@@ -65,6 +75,8 @@ export class TileCache {
       maxGPUBytes: options.maxGPUBytes ?? 1024 * 1024 * 1024, // 1 GB
       maxTiles: options.maxTiles ?? Infinity,
       preferredLevels: options.preferredLevels ?? [],
+      warmLevelCount: options.warmLevelCount ?? 3,
+      levelWarmDuration: options.levelWarmDuration ?? 30000, // 30 seconds
     };
   }
 
@@ -100,6 +112,67 @@ export class TileCache {
   }
 
   /**
+   * Peek at a tile without affecting hit/miss statistics
+   * Used for checking tiles that are currently being loaded
+   */
+  peek(level: number, x: number, y: number): Tile | null {
+    const key = this.getKey(level, x, y);
+    const tile = this.tiles.get(key);
+    
+    if (tile) {
+      tile.lastAccess = Date.now();
+      return tile;
+    }
+    
+    return null;
+  }
+
+  /**
+   * Mark a level as actively being viewed
+   * This keeps tiles at this level and nearby levels warm in cache
+   */
+  setActiveLevel(level: number): void {
+    this.currentLevel = level;
+    this.levelAccessTimes.set(level, Date.now());
+  }
+
+  /**
+   * Get recently visited levels (within warm duration)
+   */
+  getWarmLevels(): number[] {
+    const now = Date.now();
+    const warmLevels: Array<{ level: number; time: number }> = [];
+    
+    for (const [level, time] of this.levelAccessTimes) {
+      if (now - time < this.options.levelWarmDuration) {
+        warmLevels.push({ level, time });
+      }
+    }
+    
+    // Sort by most recently accessed and take top N
+    return warmLevels
+      .sort((a, b) => b.time - a.time)
+      .slice(0, this.options.warmLevelCount)
+      .map(item => item.level);
+  }
+
+  /**
+   * Check if a level is currently warm (recently visited)
+   */
+  isLevelWarm(level: number): boolean {
+    const accessTime = this.levelAccessTimes.get(level);
+    if (!accessTime) return false;
+    return Date.now() - accessTime < this.options.levelWarmDuration;
+  }
+
+  /**
+   * Get the current active level
+   */
+  getActiveLevel(): number {
+    return this.currentLevel;
+  }
+
+  /**
    * Add a tile to cache
    */
   set(tile: Tile): void {
@@ -124,9 +197,9 @@ export class TileCache {
     }
     this.tilesByLevel.get(tile.level)!.add(key);
     
-    // Track memory (estimate)
+    // Track memory using actual bitmap dimensions (not image-space dimensions)
     if (tile.imageBitmap) {
-      const bytes = tile.width * tile.height * 4; // RGBA
+      const bytes = tile.imageBitmap.width * tile.imageBitmap.height * 4; // RGBA
       this.cpuBytes += bytes;
     }
     
@@ -168,9 +241,9 @@ export class TileCache {
       }
     }
     
-    // Free memory
+    // Free memory using actual bitmap dimensions
     if (tile.imageBitmap) {
-      const bytes = tile.width * tile.height * 4;
+      const bytes = tile.imageBitmap.width * tile.imageBitmap.height * 4;
       this.cpuBytes = Math.max(0, this.cpuBytes - bytes);
       tile.imageBitmap.close();
     }
@@ -193,16 +266,31 @@ export class TileCache {
 
   /**
    * Evict least recently used tiles
-   * Respects preferred levels by evicting non-preferred first
+   * Respects preferred levels and warm levels by evicting non-preferred first
    */
   evictLRU(count: number): void {
     const tiles = Array.from(this.tiles.entries());
+    const warmLevels = this.getWarmLevels();
     
-    // Sort by priority: non-visible first, then non-preferred levels, then by access time
+    // Sort by priority: non-visible first, then non-warm/non-preferred levels, then by access time
     tiles.sort(([_keyA, a], [_keyB, b]) => {
       // Visible tiles are kept longer
       if (a.visible !== b.visible) {
         return a.visible ? 1 : -1;
+      }
+      
+      // Current level tiles are kept longest
+      const aIsCurrent = a.level === this.currentLevel;
+      const bIsCurrent = b.level === this.currentLevel;
+      if (aIsCurrent !== bIsCurrent) {
+        return aIsCurrent ? 1 : -1;
+      }
+      
+      // Warm levels (recently visited) are kept longer
+      const aWarm = warmLevels.includes(a.level);
+      const bWarm = warmLevels.includes(b.level);
+      if (aWarm !== bWarm) {
+        return aWarm ? 1 : -1;
       }
       
       // Preferred levels are kept longer
@@ -210,6 +298,13 @@ export class TileCache {
       const bPreferred = this.options.preferredLevels.includes(b.level);
       if (aPreferred !== bPreferred) {
         return aPreferred ? 1 : -1;
+      }
+      
+      // Adjacent levels to current are kept longer (for smooth zoom transitions)
+      const aAdjacent = Math.abs(a.level - this.currentLevel) <= 1;
+      const bAdjacent = Math.abs(b.level - this.currentLevel) <= 1;
+      if (aAdjacent !== bAdjacent) {
+        return aAdjacent ? 1 : -1;
       }
       
       // Lower levels (higher res) are kept longer by default
