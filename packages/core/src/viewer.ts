@@ -541,15 +541,15 @@ export class Viewer extends EventEmitter<ViewerEvents> {
           const imageSize = this.tiles.getImageSize();
           
           if (loadingCount > 0 || queueLength > 0) {
-            // Active loading in progress
+            // Active loading in progress - poll quickly to catch first tiles ASAP
             setTimeout(() => {
               this.requestRender();
-            }, 100); // Slower polling when nothing visible yet
+            }, 50); // Match other loading scenarios for consistent first-render timing
           } else if (!imageSize) {
             // TileManager hasn't initialized yet - keep polling until it does
             setTimeout(() => {
               this.requestRender();
-            }, 100);
+            }, 100); // Slower polling OK here since we're just waiting for init
           }
           // If TileManager is initialized but nothing is loading, don't poll
           // (e.g., image fully loaded or no tiles needed for current view)
