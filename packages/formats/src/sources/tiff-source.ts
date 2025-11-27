@@ -73,9 +73,13 @@ interface PyramidLevel {
   tilesAcross: number;
   /** Number of tiles vertically */
   tilesDown: number;
-  /** Cached downscaled image for this level (generated on-demand) */
-  bitmap?: ImageBitmap;
 }
+
+/**
+ * Threshold level above which we use overview instead of recursive generation
+ * Level 2+ will use overview (level 0 and 1 will still composite from native tiles)
+ */
+const OVERVIEW_THRESHOLD_LEVEL = 2;
 
 /**
  * TIFF tile source for tiled TIFF images
@@ -110,6 +114,12 @@ export class TIFFTileSource extends BaseTileSource {
   
   // Virtual pyramid for smooth zooming
   private levels: PyramidLevel[] = [];
+  
+  // Overview bitmap for fast high-level tile generation
+  // Generated once from a small set of level 0 tiles, then reused
+  private overviewBitmap: ImageBitmap | null = null;
+  private overviewGenerating = false;
+  private overviewPromise: Promise<ImageBitmap | null> | null = null;
 
   constructor(options: TIFFTileSourceOptions) {
     super(Math.max(options.tileWidth, options.tileHeight));
@@ -184,14 +194,17 @@ export class TIFFTileSource extends BaseTileSource {
     // For level 0, load from native TIFF tiles (with internal caching)
     if (level === 0) {
       result = await this.loadNativeTile(x, y);
+    } else if (level >= OVERVIEW_THRESHOLD_LEVEL) {
+      // For high levels (zoomed out), use cached overview for FAST generation
+      // This avoids the exponential recursive tile loading
+      result = await this.generateTileFromOverview(level, x, y);
     } else {
-      // For higher levels, generate virtual tiles by downscaling
-      // Note: Virtual tiles are NOT cached internally - TileCache handles that
+      // For level 1, generate from native tiles (limited recursion depth)
       result = await this.generateVirtualTile(level, x, y);
     }
     
     const elapsed = performance.now() - startTime;
-    if (elapsed > 200) {
+    if (elapsed > 500) {
       console.warn(`[TIFF] Slow tile ${level}/${x}/${y}: ${elapsed.toFixed(0)}ms`);
     }
     
@@ -468,12 +481,12 @@ export class TIFFTileSource extends BaseTileSource {
     // Count how many tiles we'd need to load
     const tilesNeeded = (tile0MaxX - tile0MinX) * (tile0MaxY - tile0MinY);
     
-    // If too many tiles needed, generate from an intermediate level instead
-    // This prevents loading dozens of tiles to generate one low-res tile
-    const maxTilesPerVirtual = 4; // Reduced from 16 for faster initial load
-    if (tilesNeeded > maxTilesPerVirtual && level > 1) {
-      // Try to generate from level-1 instead of level 0
-      return this.generateFromIntermediateLevel(level, x, y, levelInfo, tileWidth, tileHeight);
+    // If too many tiles needed (more than 4x4=16), don't load - use overview instead
+    // This method should only be called for level 1 which should have manageable tile counts
+    const maxTilesPerVirtual = 16;
+    if (tilesNeeded > maxTilesPerVirtual) {
+      // Too many tiles - fall back to overview
+      return this.generateTileFromOverview(level, x, y);
     }
     
     // Create a canvas to composite the downscaled image
@@ -675,6 +688,187 @@ export class TIFFTileSource extends BaseTileSource {
     };
   }
 
+  /**
+   * Generate or get the cached overview bitmap
+   * This creates a single downscaled image of the entire TIFF using just a few tiles
+   */
+  private async getOrCreateOverview(): Promise<ImageBitmap | null> {
+    // Return cached overview if available
+    if (this.overviewBitmap) {
+      return this.overviewBitmap;
+    }
+    
+    // If already generating, wait for the existing promise
+    if (this.overviewGenerating && this.overviewPromise) {
+      return this.overviewPromise;
+    }
+    
+    // Start generating
+    this.overviewGenerating = true;
+    this.overviewPromise = this.generateOverviewBitmap();
+    
+    try {
+      this.overviewBitmap = await this.overviewPromise;
+      return this.overviewBitmap;
+    } finally {
+      this.overviewGenerating = false;
+    }
+  }
+  
+  /**
+   * Generate an overview bitmap from a sparse grid of level 0 tiles
+   * Uses sampling to avoid loading all tiles
+   */
+  private async generateOverviewBitmap(): Promise<ImageBitmap | null> {
+    const startTime = performance.now();
+    
+    // Calculate overview size - target ~512px on the longest side
+    const maxOverviewSize = 512;
+    const scale = Math.min(maxOverviewSize / this.width, maxOverviewSize / this.height);
+    const overviewWidth = Math.ceil(this.width * scale);
+    const overviewHeight = Math.ceil(this.height * scale);
+    
+    // Create canvas for the overview
+    const canvas = new OffscreenCanvas(overviewWidth, overviewHeight);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return null;
+    }
+    
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'medium';
+    
+    // Sample tiles uniformly across the image
+    // Load just enough tiles to create a reasonable overview
+    const maxTilesToLoad = 16; // Limit to avoid loading too many
+    const tilesToLoadX = Math.min(this.tilesAcross, Math.ceil(Math.sqrt(maxTilesToLoad)));
+    const tilesToLoadY = Math.min(this.tilesDown, Math.ceil(maxTilesToLoad / tilesToLoadX));
+    
+    // Calculate step to sample tiles evenly
+    const stepX = Math.max(1, Math.floor(this.tilesAcross / tilesToLoadX));
+    const stepY = Math.max(1, Math.floor(this.tilesDown / tilesToLoadY));
+    
+    // Collect tiles to load
+    const tileCoords: Array<{ tx: number; ty: number }> = [];
+    for (let ty = 0; ty < this.tilesDown; ty += stepY) {
+      for (let tx = 0; tx < this.tilesAcross; tx += stepX) {
+        tileCoords.push({ tx, ty });
+      }
+    }
+    
+    // Load tiles in parallel with limited concurrency
+    const concurrency = Math.min(4, tileCoords.length);
+    let hasAnyTile = false;
+    
+    for (let i = 0; i < tileCoords.length; i += concurrency) {
+      const batch = tileCoords.slice(i, i + concurrency);
+      const results = await Promise.all(
+        batch.map(async ({ tx, ty }) => ({
+          tile: await this.loadNativeTile(tx, ty),
+          tx,
+          ty,
+        }))
+      );
+      
+      // Draw loaded tiles
+      for (const { tile, tx, ty } of results) {
+        if (!tile || !tile.imageBitmap) continue;
+        
+        hasAnyTile = true;
+        
+        // Calculate source position in full image
+        const srcX = tx * this.tileWidth;
+        const srcY = ty * this.tileHeight;
+        
+        // Calculate destination position in overview
+        const dstX = srcX * scale;
+        const dstY = srcY * scale;
+        const dstW = tile.imageBitmap.width * scale;
+        const dstH = tile.imageBitmap.height * scale;
+        
+        ctx.drawImage(tile.imageBitmap, 0, 0, tile.imageBitmap.width, tile.imageBitmap.height, dstX, dstY, dstW, dstH);
+      }
+    }
+    
+    if (!hasAnyTile) {
+      return null;
+    }
+    
+    const bitmap = await createImageBitmap(canvas);
+    const elapsed = performance.now() - startTime;
+    console.info(`[TIFF] Overview generated: ${overviewWidth}x${overviewHeight} from ${tileCoords.length} tiles in ${elapsed.toFixed(0)}ms`);
+    
+    return bitmap;
+  }
+  
+  /**
+   * Generate a tile from the cached overview bitmap
+   * This is MUCH faster than recursive virtual tile generation
+   */
+  private async generateTileFromOverview(level: number, x: number, y: number): Promise<Tile | null> {
+    const levelInfo = this.levels[level];
+    if (!levelInfo) return null;
+    
+    // Get or create the overview
+    const overview = await this.getOrCreateOverview();
+    if (!overview) {
+      // Fallback to recursive generation if overview fails
+      return this.generateVirtualTile(level, x, y);
+    }
+    
+    // Calculate tile bounds in level coordinates
+    const levelTileX = x * this.tileSize;
+    const levelTileY = y * this.tileSize;
+    const tileWidth = Math.min(this.tileSize, levelInfo.width - levelTileX);
+    const tileHeight = Math.min(this.tileSize, levelInfo.height - levelTileY);
+    
+    if (tileWidth <= 0 || tileHeight <= 0) return null;
+    
+    // Calculate the corresponding region in the overview bitmap
+    // Overview covers the full image at a fixed scale
+    const overviewScaleX = overview.width / this.width;
+    const overviewScaleY = overview.height / this.height;
+    
+    // Tile position in full image space
+    const imageX = levelTileX / levelInfo.scale;
+    const imageY = levelTileY / levelInfo.scale;
+    const imageTileWidth = tileWidth / levelInfo.scale;
+    const imageTileHeight = tileHeight / levelInfo.scale;
+    
+    // Source region in overview
+    const srcX = imageX * overviewScaleX;
+    const srcY = imageY * overviewScaleY;
+    const srcW = imageTileWidth * overviewScaleX;
+    const srcH = imageTileHeight * overviewScaleY;
+    
+    // Create tile canvas
+    const canvas = new OffscreenCanvas(tileWidth, tileHeight);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'medium';
+    
+    // Draw the portion of overview that corresponds to this tile
+    ctx.drawImage(overview, srcX, srcY, srcW, srcH, 0, 0, tileWidth, tileHeight);
+    
+    const imageBitmap = await createImageBitmap(canvas);
+    
+    return {
+      level,
+      x,
+      y,
+      width: imageTileWidth,
+      height: imageTileHeight,
+      imageX,
+      imageY,
+      imageBitmap,
+      loaded: true,
+      visible: false,
+      lastAccess: Date.now(),
+    };
+  }
+
   async getImageSize(): Promise<[number, number]> {
     return [this.width, this.height];
   }
@@ -709,5 +903,11 @@ export class TIFFTileSource extends BaseTileSource {
     }
     this.tileCache.clear();
     this.tileAccessOrder = [];
+    
+    // Close overview bitmap
+    if (this.overviewBitmap) {
+      this.overviewBitmap.close();
+      this.overviewBitmap = null;
+    }
   }
 }
