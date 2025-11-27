@@ -667,31 +667,42 @@ export class TIFFTileSource extends BaseTileSource {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     
-    // Determine which tiles to load
-    // For small tile grids, load all. For large grids, sample evenly.
-    const tileCoords: Array<{ tx: number; ty: number }> = [];
+    // Determine which tiles to load and how to draw them
+    // For small tile grids, load all. For large grids, sample and stretch to fill gaps.
+    const tileCoords: Array<{ tx: number; ty: number; gx: number; gy: number }> = [];
+    let gridSizeX: number;
+    let gridSizeY: number;
     
     if (totalTiles <= MAX_OVERVIEW_TILES) {
       // Small enough - load all tiles
+      gridSizeX = this.tilesAcross;
+      gridSizeY = this.tilesDown;
       for (let ty = 0; ty < this.tilesDown; ty++) {
         for (let tx = 0; tx < this.tilesAcross; tx++) {
-          tileCoords.push({ tx, ty });
+          tileCoords.push({ tx, ty, gx: tx, gy: ty });
         }
       }
     } else {
       // Too many tiles - sample a grid evenly
       const gridSize = Math.ceil(Math.sqrt(MAX_OVERVIEW_TILES));
-      const stepX = Math.max(1, this.tilesAcross / gridSize);
-      const stepY = Math.max(1, this.tilesDown / gridSize);
+      gridSizeX = Math.min(gridSize, this.tilesAcross);
+      gridSizeY = Math.min(gridSize, this.tilesDown);
+      const stepX = this.tilesAcross / gridSizeX;
+      const stepY = this.tilesDown / gridSizeY;
       
-      for (let gy = 0; gy < gridSize && gy * stepY < this.tilesDown; gy++) {
-        for (let gx = 0; gx < gridSize && gx * stepX < this.tilesAcross; gx++) {
-          const tx = Math.min(Math.floor(gx * stepX), this.tilesAcross - 1);
-          const ty = Math.min(Math.floor(gy * stepY), this.tilesDown - 1);
-          tileCoords.push({ tx, ty });
+      for (let gy = 0; gy < gridSizeY; gy++) {
+        for (let gx = 0; gx < gridSizeX; gx++) {
+          // Sample tile at center of each grid cell
+          const tx = Math.min(Math.floor(gx * stepX + stepX / 2), this.tilesAcross - 1);
+          const ty = Math.min(Math.floor(gy * stepY + stepY / 2), this.tilesDown - 1);
+          tileCoords.push({ tx, ty, gx, gy });
         }
       }
     }
+    
+    // Calculate cell size in overview - each sampled tile fills one grid cell
+    const cellWidth = overviewWidth / gridSizeX;
+    const cellHeight = overviewHeight / gridSizeY;
     
     // Load tiles in parallel and draw immediately after each batch
     // This prevents tiles from being evicted from cache before drawing
@@ -701,28 +712,27 @@ export class TIFFTileSource extends BaseTileSource {
     for (let i = 0; i < tileCoords.length; i += concurrency) {
       const batch = tileCoords.slice(i, i + concurrency);
       const results = await Promise.all(
-        batch.map(async ({ tx, ty }) => ({
+        batch.map(async ({ tx, ty, gx, gy }) => ({
           tile: await this.loadNativeTile(tx, ty),
           tx,
           ty,
+          gx,
+          gy,
         }))
       );
       
       // Draw tiles immediately after loading this batch
-      for (const { tile, tx, ty } of results) {
+      // Each tile is stretched to fill its grid cell (eliminates gaps)
+      for (const { tile, gx, gy } of results) {
         if (!tile || !tile.imageBitmap) continue;
         
         hasAnyTile = true;
         
-        // Calculate source position in full image
-        const srcX = tx * this.tileWidth;
-        const srcY = ty * this.tileHeight;
-        
-        // Calculate destination position in overview
-        const dstX = srcX * scale;
-        const dstY = srcY * scale;
-        const dstW = tile.imageBitmap.width * scale;
-        const dstH = tile.imageBitmap.height * scale;
+        // Draw to grid cell position, stretched to fill the cell
+        const dstX = gx * cellWidth;
+        const dstY = gy * cellHeight;
+        const dstW = cellWidth;
+        const dstH = cellHeight;
         
         ctx.drawImage(tile.imageBitmap, 0, 0, tile.imageBitmap.width, tile.imageBitmap.height, dstX, dstY, dstW, dstH);
       }
