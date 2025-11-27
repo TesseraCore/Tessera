@@ -202,14 +202,20 @@ interface TileTextureEntry {
 
 /**
  * WebGPU rendering backend with full GPU pipeline
+ * 
+ * Optimizations:
+ * - Lazy pipeline initialization (defer until first render)
+ * - Deferred texture uploads to avoid blocking render frames
  */
 export class WebGPUBackend extends BaseBackend {
   private device: GPUDevice | null = null;
   private context: GPUCanvasContext | null = null;
   private format: GPUTextureFormat = 'bgra8unorm';
   
-  // Render pipelines
+  // Render pipelines (lazy initialized)
   private tilePipeline: GPURenderPipeline | null = null;
+  private pipelinesInitialized = false;
+  private pipelineInitPromise: Promise<void> | null = null;
   // Clear pipeline reserved for future use
   // private clearPipeline: GPURenderPipeline | null = null;
   
@@ -272,16 +278,36 @@ export class WebGPUBackend extends BaseBackend {
     this.width = canvas.width;
     this.height = canvas.height;
     
-    // Initialize pipelines
-    await this.initializePipelines();
+    // OPTIMIZATION: Defer pipeline initialization until first render
+    // This allows the viewer to become responsive faster
+    // Pipelines will be created lazily on first renderTiles() call
     
-    // Create fallback canvas for complex operations
+    // Create fallback canvas for complex operations (lightweight)
     this.fallbackCanvas = document.createElement('canvas');
     this.fallbackCanvas.width = canvas.width;
     this.fallbackCanvas.height = canvas.height;
     this.fallbackCtx = this.fallbackCanvas.getContext('2d');
     
     this.initialized = true;
+  }
+
+  /**
+   * Ensure pipelines are initialized (lazy initialization)
+   */
+  private async ensurePipelinesInitialized(): Promise<boolean> {
+    if (this.pipelinesInitialized) {
+      return true;
+    }
+    
+    if (this.pipelineInitPromise) {
+      await this.pipelineInitPromise;
+      return this.pipelinesInitialized;
+    }
+    
+    this.pipelineInitPromise = this.initializePipelines();
+    await this.pipelineInitPromise;
+    this.pipelinesInitialized = true;
+    return true;
   }
 
   private async initializePipelines(): Promise<void> {
@@ -397,8 +423,18 @@ export class WebGPUBackend extends BaseBackend {
   }
 
   async renderTiles(tiles: Tile[], view: ViewUniforms): Promise<void> {
-    if (!this.device || !this.context || !this.tilePipeline || !this.tileUniformBuffer) {
-      console.warn('[WebGPU] Pipeline not ready, using fallback');
+    if (!this.device || !this.context) {
+      console.warn('[WebGPU] Device not ready, using fallback');
+      return this.renderTilesFallback(tiles, view);
+    }
+    
+    // Lazy initialize pipelines on first render
+    if (!this.pipelinesInitialized) {
+      await this.ensurePipelinesInitialized();
+    }
+    
+    if (!this.tilePipeline || !this.tileUniformBuffer) {
+      console.warn('[WebGPU] Pipeline not ready after init, using fallback');
       return this.renderTilesFallback(tiles, view);
     }
     

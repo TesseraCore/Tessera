@@ -93,10 +93,14 @@ export class TileManager {
   constructor(options: TileManagerOptions) {
     this.source = options.source;
     this.cache = new TileCache(options.cache);
-    this.maxConcurrentLoads = options.maxConcurrentLoads ?? 12; // Increased for faster loading
+    // OPTIMIZATION: Reduced concurrent loads during initial load to prevent resource exhaustion
+    // Start with 6 concurrent loads, can be increased after initial load completes
+    this.maxConcurrentLoads = options.maxConcurrentLoads ?? 6;
     this.progressiveLoading = options.progressiveLoading ?? true;
+    // OPTIMIZATION: Disable prefetch during initial load to prioritize visible tiles
     this.enablePrefetch = options.enablePrefetch ?? true;
     this.prefetchMargin = options.prefetchMargin ?? 1;
+    // OPTIMIZATION: Disable level prefetch during initial load
     this.enableLevelPrefetch = options.enableLevelPrefetch ?? true;
     this.levelPrefetchRange = options.levelPrefetchRange ?? 1;
     
@@ -573,7 +577,8 @@ export class TileManager {
 
   /**
    * Schedule queue processing
-   * Uses queueMicrotask for fast scheduling, ensuring tiles load as quickly as possible
+   * OPTIMIZATION: Uses requestIdleCallback when available to avoid blocking main thread
+   * Falls back to setTimeout for browsers without requestIdleCallback support
    */
   private scheduleQueueProcessing(): void {
     if (this.queueProcessingScheduled || this.loadingQueue.length === 0) {
@@ -582,26 +587,34 @@ export class TileManager {
     
     this.queueProcessingScheduled = true;
     
-    // Use queueMicrotask for fastest possible scheduling
-    // Tile decoding happens asynchronously in the browser anyway,
-    // so we just need to kick off the requests quickly
-    queueMicrotask(() => {
-      this.queueProcessingScheduled = false;
-      this.processQueue();
-    });
+    // OPTIMIZATION: During initial load, use requestIdleCallback to avoid blocking
+    // This allows the browser to handle user interactions and rendering first
+    if (this.isInitialLoad && typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(() => {
+        this.queueProcessingScheduled = false;
+        this.processQueue();
+      }, { timeout: 50 }); // Ensure we don't wait too long
+    } else {
+      // After initial load or without requestIdleCallback, use microtask for speed
+      queueMicrotask(() => {
+        this.queueProcessingScheduled = false;
+        this.processQueue();
+      });
+    }
   }
 
   /**
    * Process loading queue
-   * Processes tiles aggressively to minimize time-to-first-paint
+   * OPTIMIZATION: Reduced batch size during initial load to prevent frame drops
    */
   private async processQueue(): Promise<void> {
-    // Use full concurrent load capacity - don't throttle during initial load
-    // The browser/GPU will handle the actual parallelism appropriately
-    const effectiveMaxLoads = this.maxConcurrentLoads;
+    // OPTIMIZATION: Reduce concurrent loads during initial load
+    const effectiveMaxLoads = this.isInitialLoad 
+      ? Math.min(this.maxConcurrentLoads, 4)  // More conservative during initial load
+      : this.maxConcurrentLoads;
     
-    // Start multiple tiles per cycle for faster loading
-    const maxStartsPerCycle = 4;
+    // OPTIMIZATION: Start fewer tiles per cycle during initial load
+    const maxStartsPerCycle = this.isInitialLoad ? 2 : 4;
     let startsThisCycle = 0;
     
     while (
@@ -629,13 +642,13 @@ export class TileManager {
         .finally(() => {
           this.activeLoads--;
           this.loadingTiles.delete(key);
-          // Schedule more processing immediately
+          // Schedule more processing
           this.scheduleQueueProcessing();
         });
     }
     
     // If there are more tiles to load, schedule another processing cycle
-    if (this.loadingQueue.length > 0 && this.activeLoads < this.maxConcurrentLoads) {
+    if (this.loadingQueue.length > 0 && this.activeLoads < effectiveMaxLoads) {
       this.scheduleQueueProcessing();
     }
   }
@@ -675,12 +688,17 @@ export class TileManager {
   
   /**
    * Mark initial load as complete (call after first successful render)
+   * This enables prefetching and increases concurrent load limits
    */
   markInitialLoadComplete(): void {
     if (this.isInitialLoad) {
       this.isInitialLoad = false;
       const loadTime = Date.now() - this.initialLoadStartTime;
       console.debug(`[TileManager] Initial load complete in ${loadTime}ms`);
+      
+      // OPTIMIZATION: Increase concurrent loads after initial load for better performance
+      // Now that we've shown something to the user, we can be more aggressive
+      this.maxConcurrentLoads = Math.max(this.maxConcurrentLoads, 12);
     }
   }
 

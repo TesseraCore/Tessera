@@ -80,11 +80,13 @@ interface PyramidLevel {
  * Level 2+ will use overview (level 0 and 1 will still composite from native tiles)
  */
 // Level at which we switch from recursive generation to overview-based generation
-// Level 3 = 8x8 = 64 level 0 tiles max per tile, which is manageable
-const OVERVIEW_THRESHOLD_LEVEL = 3;
+// OPTIMIZATION: Lowered to level 2 to reduce tile loading during initial zoom-out view
+// Level 2 = 4x4 = 16 level 0 tiles max per tile
+const OVERVIEW_THRESHOLD_LEVEL = 2;
 
-// Maximum number of tiles to load for overview generation
-const MAX_OVERVIEW_TILES = 36;
+// OPTIMIZATION: Reduced max overview tiles from 36 to 16 for faster initial load
+// This creates a lower quality overview but loads much faster
+const MAX_OVERVIEW_TILES = 16;
 
 /**
  * TIFF tile source for tiled TIFF images
@@ -107,7 +109,7 @@ export class TIFFTileSource extends BaseTileSource {
   // Internal cache for level 0 tiles (needed to generate virtual pyramid tiles)
   // Size must be at least MAX_OVERVIEW_TILES to prevent eviction during overview generation
   private tileCache = new Map<string, ImageBitmap>();
-  private maxCachedTiles = 48; // Must be >= MAX_OVERVIEW_TILES (36) + buffer for concurrent loads
+  private maxCachedTiles = 24; // Must be >= MAX_OVERVIEW_TILES (16) + buffer for concurrent loads
   private tileAccessOrder: string[] = []; // LRU tracking
   
   // Compression and color settings
@@ -646,13 +648,16 @@ export class TIFFTileSource extends BaseTileSource {
    * Generate an overview bitmap from a grid of level 0 tiles
    * Uses a limited number of tiles scaled up to fill the entire overview
    * This creates a rough preview quickly for high zoom-out levels
+   * 
+   * OPTIMIZATION: Reduced overview size and tile count for faster initial load
    */
   private async generateOverviewBitmap(): Promise<ImageBitmap | null> {
     const startTime = performance.now();
     const totalTiles = this.tilesAcross * this.tilesDown;
     
-    // Calculate overview size - target ~512px on the longest side
-    const maxOverviewSize = 512;
+    // OPTIMIZATION: Reduced overview size from 512px to 256px for faster generation
+    // This is sufficient for zoomed-out views and loads much faster
+    const maxOverviewSize = 256;
     const scale = Math.min(maxOverviewSize / this.width, maxOverviewSize / this.height);
     const overviewWidth = Math.ceil(this.width * scale);
     const overviewHeight = Math.ceil(this.height * scale);

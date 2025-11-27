@@ -153,6 +153,10 @@ export class TIFFParser extends BaseFormatParser {
       
       let ifds: any[];
       try {
+        // OPTIMIZATION: Yield to main thread before heavy UTIF parsing
+        // This allows the browser to handle pending UI updates
+        await new Promise(resolve => setTimeout(resolve, 0));
+        
         // Decode TIFF using UTIF (warnings will be captured)
         ifds = UTIF.decode(arrayBuffer);
         
@@ -185,6 +189,9 @@ export class TIFFParser extends BaseFormatParser {
         if (!ifds || ifds.length === 0) {
           throw new Error('Failed to decode TIFF file: No image data found');
         }
+        
+        // OPTIMIZATION: Yield to main thread after UTIF parsing
+        await new Promise(resolve => setTimeout(resolve, 0));
       } catch (error) {
         // Always restore console.warn even on error
         console.warn = originalWarn;

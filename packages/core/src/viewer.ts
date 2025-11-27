@@ -517,9 +517,11 @@ export class Viewer extends EventEmitter<ViewerEvents> {
             const queueLength = this.tiles.getQueueLength();
             
             if (loadingCount > 0 || queueLength > 0) {
-              setTimeout(() => {
+              // OPTIMIZATION: Use requestAnimationFrame instead of setTimeout
+              // This reduces CPU overhead and syncs with display refresh
+              requestAnimationFrame(() => {
                 this.requestRender();
-              }, 50); // Poll at ~20fps while loading to reduce CPU overhead
+              });
             }
             // If nothing is loading, the tiles might have failed - don't spin
           }
@@ -529,9 +531,10 @@ export class Viewer extends EventEmitter<ViewerEvents> {
           const queueLength = this.tiles.getQueueLength();
           
           if (loadingCount > 0 || queueLength > 0) {
-            setTimeout(() => {
+            // OPTIMIZATION: Use requestAnimationFrame for smoother loading
+            requestAnimationFrame(() => {
               this.requestRender();
-            }, 50); // Poll at ~20fps while loading
+            });
           }
         } else {
           // No visible tiles yet - check if there's active loading or pending init
@@ -541,15 +544,16 @@ export class Viewer extends EventEmitter<ViewerEvents> {
           const imageSize = this.tiles.getImageSize();
           
           if (loadingCount > 0 || queueLength > 0) {
-            // Active loading in progress - poll quickly to catch first tiles ASAP
-            setTimeout(() => {
+            // Active loading in progress - use RAF for efficient polling
+            requestAnimationFrame(() => {
               this.requestRender();
-            }, 50); // Match other loading scenarios for consistent first-render timing
+            });
           } else if (!imageSize) {
             // TileManager hasn't initialized yet - keep polling until it does
+            // OPTIMIZATION: Use longer interval for init waiting (less CPU)
             setTimeout(() => {
               this.requestRender();
-            }, 100); // Slower polling OK here since we're just waiting for init
+            }, 100);
           }
           // If TileManager is initialized but nothing is loading, don't poll
           // (e.g., image fully loaded or no tiles needed for current view)
