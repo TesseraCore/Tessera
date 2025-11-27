@@ -21,6 +21,7 @@ export interface ViewerEvents {
   'viewer:error': { error: Error };
   'viewer:backend-changed': { backend: RenderBackendType };
   'viewer:image-loaded': { source: string | ArrayBuffer; size: [number, number]; format: string };
+  'viewer:first-render': { tileCount: number };
   'viewer:resize': { width: number; height: number };
 }
 
@@ -60,6 +61,9 @@ export class Viewer extends EventEmitter<ViewerEvents> {
   
   /** Whether rendering is paused */
   private paused = false;
+  
+  /** Whether first tiles have been rendered (used to emit viewer:first-render) */
+  private firstRenderEmitted = false;
 
   constructor(options: ViewerOptions) {
     super();
@@ -302,6 +306,9 @@ export class Viewer extends EventEmitter<ViewerEvents> {
     size?: [number, number]
   ): Promise<void> {
     try {
+      // Reset first render flag for new image
+      this.firstRenderEmitted = false;
+      
       this.state.imageSource = source;
       this.state.imageFormat = format ?? null;
       
@@ -491,6 +498,12 @@ export class Viewer extends EventEmitter<ViewerEvents> {
               // Mark initial load complete after first successful render
               if (this.tiles.markInitialLoadComplete) {
                 this.tiles.markInitialLoadComplete();
+              }
+              
+              // Emit first-render event once after first successful tile render
+              if (!this.firstRenderEmitted) {
+                this.firstRenderEmitted = true;
+                this.emit('viewer:first-render', { tileCount: renderableTiles.length });
               }
             } catch (renderError) {
               console.error('[Viewer] Error in renderTiles:', renderError);

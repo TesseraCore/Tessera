@@ -194,6 +194,12 @@ async function initViewer() {
 
     viewer.on('viewer:image-loaded', ({ size, format }) => {
       console.log('[Demo] Image loaded:', { size, format });
+      // Don't hide loading here - wait for first render
+      updateStatus();
+    });
+
+    viewer.on('viewer:first-render', ({ tileCount }) => {
+      console.log('[Demo] First tiles rendered:', tileCount);
       hideLoading();
       updateStatus();
     });
