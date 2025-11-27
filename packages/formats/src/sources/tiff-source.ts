@@ -646,8 +646,8 @@ export class TIFFTileSource extends BaseTileSource {
   
   /**
    * Generate an overview bitmap from a grid of level 0 tiles
-   * Uses a limited number of tiles scaled up to fill the entire overview
-   * This creates a rough preview quickly for high zoom-out levels
+   * Uses a limited number of tiles scaled to their correct positions
+   * This creates a preview for high zoom-out levels
    * 
    * OPTIMIZATION: Reduced overview size and tile count for faster initial load
    */
@@ -658,9 +658,9 @@ export class TIFFTileSource extends BaseTileSource {
     // OPTIMIZATION: Reduced overview size from 512px to 256px for faster generation
     // This is sufficient for zoomed-out views and loads much faster
     const maxOverviewSize = 256;
-    const scale = Math.min(maxOverviewSize / this.width, maxOverviewSize / this.height);
-    const overviewWidth = Math.ceil(this.width * scale);
-    const overviewHeight = Math.ceil(this.height * scale);
+    const overviewScale = Math.min(maxOverviewSize / this.width, maxOverviewSize / this.height);
+    const overviewWidth = Math.ceil(this.width * overviewScale);
+    const overviewHeight = Math.ceil(this.height * overviewScale);
     
     // Create canvas for the overview
     const canvas = new OffscreenCanvas(overviewWidth, overviewHeight);
@@ -672,26 +672,22 @@ export class TIFFTileSource extends BaseTileSource {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     
-    // Determine which tiles to load and how to draw them
-    // For small tile grids, load all. For large grids, sample and stretch to fill gaps.
-    const tileCoords: Array<{ tx: number; ty: number; gx: number; gy: number }> = [];
-    let gridSizeX: number;
-    let gridSizeY: number;
+    // Determine which tiles to load
+    // For small tile grids, load all. For large grids, sample evenly.
+    const tileCoords: Array<{ tx: number; ty: number }> = [];
     
     if (totalTiles <= MAX_OVERVIEW_TILES) {
       // Small enough - load all tiles
-      gridSizeX = this.tilesAcross;
-      gridSizeY = this.tilesDown;
       for (let ty = 0; ty < this.tilesDown; ty++) {
         for (let tx = 0; tx < this.tilesAcross; tx++) {
-          tileCoords.push({ tx, ty, gx: tx, gy: ty });
+          tileCoords.push({ tx, ty });
         }
       }
     } else {
       // Too many tiles - sample a grid evenly
       const gridSize = Math.ceil(Math.sqrt(MAX_OVERVIEW_TILES));
-      gridSizeX = Math.min(gridSize, this.tilesAcross);
-      gridSizeY = Math.min(gridSize, this.tilesDown);
+      const gridSizeX = Math.min(gridSize, this.tilesAcross);
+      const gridSizeY = Math.min(gridSize, this.tilesDown);
       const stepX = this.tilesAcross / gridSizeX;
       const stepY = this.tilesDown / gridSizeY;
       
@@ -700,46 +696,53 @@ export class TIFFTileSource extends BaseTileSource {
           // Sample tile at center of each grid cell
           const tx = Math.min(Math.floor(gx * stepX + stepX / 2), this.tilesAcross - 1);
           const ty = Math.min(Math.floor(gy * stepY + stepY / 2), this.tilesDown - 1);
-          tileCoords.push({ tx, ty, gx, gy });
+          // Avoid duplicates
+          if (!tileCoords.some(t => t.tx === tx && t.ty === ty)) {
+            tileCoords.push({ tx, ty });
+          }
         }
       }
     }
     
-    // Calculate cell size in overview - each sampled tile fills one grid cell
-    const cellWidth = overviewWidth / gridSizeX;
-    const cellHeight = overviewHeight / gridSizeY;
-    
-    // Load tiles in parallel and draw immediately after each batch
-    // This prevents tiles from being evicted from cache before drawing
+    // Load tiles in parallel and draw at their ACTUAL positions (scaled to overview)
     const concurrency = Math.min(8, tileCoords.length);
     let hasAnyTile = false;
     
     for (let i = 0; i < tileCoords.length; i += concurrency) {
       const batch = tileCoords.slice(i, i + concurrency);
       const results = await Promise.all(
-        batch.map(async ({ tx, ty, gx, gy }) => ({
+        batch.map(async ({ tx, ty }) => ({
           tile: await this.loadNativeTile(tx, ty),
           tx,
           ty,
-          gx,
-          gy,
         }))
       );
       
-      // Draw tiles immediately after loading this batch
-      // Each tile is stretched to fill its grid cell (eliminates gaps)
-      for (const { tile, gx, gy } of results) {
+      // Draw tiles at their correct positions in the overview
+      for (const { tile, tx, ty } of results) {
         if (!tile || !tile.imageBitmap) continue;
         
         hasAnyTile = true;
         
-        // Draw to grid cell position, stretched to fill the cell
-        const dstX = gx * cellWidth;
-        const dstY = gy * cellHeight;
-        const dstW = cellWidth;
-        const dstH = cellHeight;
+        // Calculate the tile's position in image space (level 0)
+        const imageX = tx * this.tileWidth;
+        const imageY = ty * this.tileHeight;
+        // Tile may be smaller at edges
+        const tileW = Math.min(this.tileWidth, this.width - imageX);
+        const tileH = Math.min(this.tileHeight, this.height - imageY);
         
-        ctx.drawImage(tile.imageBitmap, 0, 0, tile.imageBitmap.width, tile.imageBitmap.height, dstX, dstY, dstW, dstH);
+        // Scale to overview coordinates
+        const dstX = imageX * overviewScale;
+        const dstY = imageY * overviewScale;
+        const dstW = tileW * overviewScale;
+        const dstH = tileH * overviewScale;
+        
+        // Draw the tile at its correct position
+        ctx.drawImage(
+          tile.imageBitmap, 
+          0, 0, tile.imageBitmap.width, tile.imageBitmap.height,
+          dstX, dstY, dstW, dstH
+        );
       }
     }
     

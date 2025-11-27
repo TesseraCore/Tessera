@@ -489,6 +489,19 @@ export class Viewer extends EventEmitter<ViewerEvents> {
           const renderableTiles = readyTiles.filter(t => t.texture || t.imageBitmap);
           
           if (renderableTiles.length > 0) {
+            // Sort tiles by level (descending) so lower-res tiles render first (as background)
+            // and higher-res tiles render on top
+            // Within same level, sort by y then x for consistent ordering
+            renderableTiles.sort((a, b) => {
+              if (a.level !== b.level) {
+                return b.level - a.level; // Higher level (lower res) first
+              }
+              if (a.y !== b.y) {
+                return a.y - b.y;
+              }
+              return a.x - b.x;
+            });
+            
             try {
               const result = this.backend.renderTiles(renderableTiles, viewUniforms);
               if (result instanceof Promise) {
@@ -653,3 +666,4 @@ export class Viewer extends EventEmitter<ViewerEvents> {
     }
   }
 }
+
