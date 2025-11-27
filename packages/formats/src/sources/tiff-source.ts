@@ -79,7 +79,12 @@ interface PyramidLevel {
  * Threshold level above which we use overview instead of recursive generation
  * Level 2+ will use overview (level 0 and 1 will still composite from native tiles)
  */
-const OVERVIEW_THRESHOLD_LEVEL = 2;
+// Level at which we switch from recursive generation to overview-based generation
+// Level 3 = 8x8 = 64 level 0 tiles max per tile, which is manageable
+const OVERVIEW_THRESHOLD_LEVEL = 3;
+
+// Maximum number of tiles to load for overview generation
+const MAX_OVERVIEW_TILES = 36;
 
 /**
  * TIFF tile source for tiled TIFF images
@@ -100,9 +105,9 @@ export class TIFFTileSource extends BaseTileSource {
   private tilesDown: number;
   
   // Internal cache for level 0 tiles (needed to generate virtual pyramid tiles)
-  // Limited to prevent memory bloat - only caches level 0 tiles
+  // Size must be at least MAX_OVERVIEW_TILES to prevent eviction during overview generation
   private tileCache = new Map<string, ImageBitmap>();
-  private maxCachedTiles = 16; // Reduced to prevent memory bloat (TileCache also caches)
+  private maxCachedTiles = 48; // Must be >= MAX_OVERVIEW_TILES (36) + buffer for concurrent loads
   private tileAccessOrder: string[] = []; // LRU tracking
   
   // Compression and color settings
@@ -153,12 +158,16 @@ export class TIFFTileSource extends BaseTileSource {
   /**
    * Initialize virtual pyramid level structure
    * Creates enough levels so the smallest fits in roughly one tile
+   * Limited to prevent excessive tile loading for very zoomed out views
    */
   private initializePyramid(): void {
     const minDimension = Math.min(this.width, this.height);
+    const maxTileDim = Math.max(this.tileWidth, this.tileHeight);
     
     // Calculate how many levels we need (enough so smallest fits in ~1-2 tiles)
-    const levelCount = Math.max(1, Math.ceil(Math.log2(minDimension / this.tileSize)) + 1);
+    // But limit to avoid exponential tile loading for high levels
+    const maxLevels = 5; // Levels 0-4 (level 4 = 16x downscale, needs up to 256 tiles)
+    const levelCount = Math.min(maxLevels, Math.max(1, Math.ceil(Math.log2(minDimension / maxTileDim)) + 1));
     
     this.levels = [];
     for (let i = 0; i < levelCount; i++) {
@@ -171,8 +180,8 @@ export class TIFFTileSource extends BaseTileSource {
         width: levelWidth,
         height: levelHeight,
         scale,
-        tilesAcross: Math.ceil(levelWidth / this.tileSize),
-        tilesDown: Math.ceil(levelHeight / this.tileSize),
+        tilesAcross: Math.ceil(levelWidth / this.tileWidth),
+        tilesDown: Math.ceil(levelHeight / this.tileHeight),
       });
     }
   }
@@ -444,7 +453,9 @@ export class TIFFTileSource extends BaseTileSource {
   }
   
   /**
-   * Generate a virtual tile for levels > 0 by downscaling from level 0
+   * Generate a virtual tile for levels > 0 by downscaling from the previous level
+   * For level 1, generates from level 0 (native tiles)
+   * For level 2+, generates from level-1 (recursive, but each level is cached by TileManager)
    */
   private async generateVirtualTile(level: number, x: number, y: number): Promise<Tile | null> {
     const levelInfo = this.levels[level];
@@ -453,17 +464,22 @@ export class TIFFTileSource extends BaseTileSource {
     }
     
     // Calculate this tile's bounds in level coordinates
-    const levelTileX = x * this.tileSize;
-    const levelTileY = y * this.tileSize;
-    const tileWidth = Math.min(this.tileSize, levelInfo.width - levelTileX);
-    const tileHeight = Math.min(this.tileSize, levelInfo.height - levelTileY);
+    // Use native tile dimensions for consistency
+    const levelTileX = x * this.tileWidth;
+    const levelTileY = y * this.tileHeight;
+    const tileWidth = Math.min(this.tileWidth, levelInfo.width - levelTileX);
+    const tileHeight = Math.min(this.tileHeight, levelInfo.height - levelTileY);
     
     if (tileWidth <= 0 || tileHeight <= 0) {
       return null;
     }
     
+    // For level 1, we generate directly from level 0 (native) tiles
+    // For level 2+, we could use recursive generation from level-1,
+    // but that leads to the TIFFTileSource bypassing the TileManager cache
+    // So we always generate from level 0 tiles, but limit the tile count
+    
     // Calculate which level 0 tiles we need
-    // Each pixel in this level corresponds to 2^level pixels in level 0
     const scaleFactor = Math.pow(2, level);
     
     // Bounds in level 0 pixel space
@@ -481,8 +497,10 @@ export class TIFFTileSource extends BaseTileSource {
     // Count how many tiles we'd need to load
     const tilesNeeded = (tile0MaxX - tile0MinX) * (tile0MaxY - tile0MinY);
     
-    // If too many tiles needed (more than 4x4=16), don't load - use overview instead
-    // This method should only be called for level 1 which should have manageable tile counts
+    // Limit tile loading to prevent slow generation
+    // For level 1: typically 4 tiles (2x2)
+    // For level 2: typically 16 tiles (4x4)
+    // Beyond that, fall back to overview for faster (if lower quality) results
     const maxTilesPerVirtual = 16;
     if (tilesNeeded > maxTilesPerVirtual) {
       // Too many tiles - fall back to overview
@@ -625,14 +643,16 @@ export class TIFFTileSource extends BaseTileSource {
   }
   
   /**
-   * Generate an overview bitmap from ALL level 0 tiles
-   * This creates a complete low-res image for fast high-level tile generation
+   * Generate an overview bitmap from a grid of level 0 tiles
+   * Uses a limited number of tiles scaled up to fill the entire overview
+   * This creates a rough preview quickly for high zoom-out levels
    */
   private async generateOverviewBitmap(): Promise<ImageBitmap | null> {
     const startTime = performance.now();
+    const totalTiles = this.tilesAcross * this.tilesDown;
     
-    // Calculate overview size - target ~1024px on the longest side for better quality
-    const maxOverviewSize = 1024;
+    // Calculate overview size - target ~512px on the longest side
+    const maxOverviewSize = 512;
     const scale = Math.min(maxOverviewSize / this.width, maxOverviewSize / this.height);
     const overviewWidth = Math.ceil(this.width * scale);
     const overviewHeight = Math.ceil(this.height * scale);
@@ -647,16 +667,34 @@ export class TIFFTileSource extends BaseTileSource {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     
-    // Load ALL tiles to create a complete overview
-    // This is necessary for proper tile stitching
+    // Determine which tiles to load
+    // For small tile grids, load all. For large grids, sample evenly.
     const tileCoords: Array<{ tx: number; ty: number }> = [];
-    for (let ty = 0; ty < this.tilesDown; ty++) {
-      for (let tx = 0; tx < this.tilesAcross; tx++) {
-        tileCoords.push({ tx, ty });
+    
+    if (totalTiles <= MAX_OVERVIEW_TILES) {
+      // Small enough - load all tiles
+      for (let ty = 0; ty < this.tilesDown; ty++) {
+        for (let tx = 0; tx < this.tilesAcross; tx++) {
+          tileCoords.push({ tx, ty });
+        }
+      }
+    } else {
+      // Too many tiles - sample a grid evenly
+      const gridSize = Math.ceil(Math.sqrt(MAX_OVERVIEW_TILES));
+      const stepX = Math.max(1, this.tilesAcross / gridSize);
+      const stepY = Math.max(1, this.tilesDown / gridSize);
+      
+      for (let gy = 0; gy < gridSize && gy * stepY < this.tilesDown; gy++) {
+        for (let gx = 0; gx < gridSize && gx * stepX < this.tilesAcross; gx++) {
+          const tx = Math.min(Math.floor(gx * stepX), this.tilesAcross - 1);
+          const ty = Math.min(Math.floor(gy * stepY), this.tilesDown - 1);
+          tileCoords.push({ tx, ty });
+        }
       }
     }
     
-    // Load tiles in parallel with higher concurrency for faster overview generation
+    // Load tiles in parallel and draw immediately after each batch
+    // This prevents tiles from being evicted from cache before drawing
     const concurrency = Math.min(8, tileCoords.length);
     let hasAnyTile = false;
     
@@ -670,7 +708,7 @@ export class TIFFTileSource extends BaseTileSource {
         }))
       );
       
-      // Draw loaded tiles
+      // Draw tiles immediately after loading this batch
       for (const { tile, tx, ty } of results) {
         if (!tile || !tile.imageBitmap) continue;
         
@@ -717,10 +755,11 @@ export class TIFFTileSource extends BaseTileSource {
     }
     
     // Calculate tile bounds in level coordinates
-    const levelTileX = x * this.tileSize;
-    const levelTileY = y * this.tileSize;
-    const tileWidth = Math.min(this.tileSize, levelInfo.width - levelTileX);
-    const tileHeight = Math.min(this.tileSize, levelInfo.height - levelTileY);
+    // Use native tile dimensions for consistency
+    const levelTileX = x * this.tileWidth;
+    const levelTileY = y * this.tileHeight;
+    const tileWidth = Math.min(this.tileWidth, levelInfo.width - levelTileX);
+    const tileHeight = Math.min(this.tileHeight, levelInfo.height - levelTileY);
     
     if (tileWidth <= 0 || tileHeight <= 0) return null;
     
@@ -778,8 +817,9 @@ export class TIFFTileSource extends BaseTileSource {
   }
 
   async getTileSize(_level: number): Promise<[number, number]> {
-    // All levels use the same tile size (virtual tiles are generated at this size)
-    return [this.tileSize, this.tileSize];
+    // Return actual native tile dimensions
+    // Virtual tiles use the same dimensions for consistency
+    return [this.tileWidth, this.tileHeight];
   }
 
   /**
