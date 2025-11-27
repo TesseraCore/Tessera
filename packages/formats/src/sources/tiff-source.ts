@@ -598,97 +598,6 @@ export class TIFFTileSource extends BaseTileSource {
   }
 
   /**
-   * Generate a virtual tile from an intermediate level (not level 0)
-   * This is faster when generating very low resolution tiles
-   */
-  private async generateFromIntermediateLevel(
-    level: number,
-    x: number,
-    y: number,
-    levelInfo: PyramidLevel,
-    tileWidth: number,
-    tileHeight: number
-  ): Promise<Tile | null> {
-    // Use level-1 as the source (recursively generates if needed)
-    const sourceLevel = level - 1;
-    const sourceLevelInfo = this.levels[sourceLevel];
-    if (!sourceLevelInfo) {
-      return null;
-    }
-    
-    // Calculate which tiles from sourceLevel we need
-    // Each tile at level N covers 2x2 tiles at level N-1
-    const sourceTileMinX = x * 2;
-    const sourceTileMaxX = Math.min(sourceTileMinX + 2, sourceLevelInfo.tilesAcross);
-    const sourceTileMinY = y * 2;
-    const sourceTileMaxY = Math.min(sourceTileMinY + 2, sourceLevelInfo.tilesDown);
-    
-    // Create canvas for output
-    const canvas = new OffscreenCanvas(tileWidth, tileHeight);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      return null;
-    }
-    
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'medium';
-    
-    // Load source tiles (at most 4)
-    let hasAnyTile = false;
-    for (let sy = sourceTileMinY; sy < sourceTileMaxY; sy++) {
-      for (let sx = sourceTileMinX; sx < sourceTileMaxX; sx++) {
-        // Recursively get the source tile (may generate it)
-        const sourceTile = await this.getTile(sourceLevel, sx, sy);
-        if (!sourceTile || !sourceTile.imageBitmap) {
-          continue;
-        }
-        
-        hasAnyTile = true;
-        
-        // Calculate destination position
-        const dstX = (sx - sourceTileMinX) * (tileWidth / 2);
-        const dstY = (sy - sourceTileMinY) * (tileHeight / 2);
-        const dstW = tileWidth / 2;
-        const dstH = tileHeight / 2;
-        
-        ctx.drawImage(
-          sourceTile.imageBitmap,
-          0, 0, sourceTile.imageBitmap.width, sourceTile.imageBitmap.height,
-          dstX, dstY, dstW, dstH
-        );
-      }
-    }
-    
-    if (!hasAnyTile) {
-      return null;
-    }
-    
-    const imageBitmap = await createImageBitmap(canvas);
-    
-    // Convert to full-resolution image space
-    const levelTileX = x * this.tileSize;
-    const levelTileY = y * this.tileSize;
-    const imageX = levelTileX / levelInfo.scale;
-    const imageY = levelTileY / levelInfo.scale;
-    const imageWidth = tileWidth / levelInfo.scale;
-    const imageHeight = tileHeight / levelInfo.scale;
-    
-    return {
-      level,
-      x,
-      y,
-      width: imageWidth,
-      height: imageHeight,
-      imageX,
-      imageY,
-      imageBitmap,
-      loaded: true,
-      visible: false,
-      lastAccess: Date.now(),
-    };
-  }
-
-  /**
    * Generate or get the cached overview bitmap
    * This creates a single downscaled image of the entire TIFF using just a few tiles
    */
@@ -716,14 +625,14 @@ export class TIFFTileSource extends BaseTileSource {
   }
   
   /**
-   * Generate an overview bitmap from a sparse grid of level 0 tiles
-   * Uses sampling to avoid loading all tiles
+   * Generate an overview bitmap from ALL level 0 tiles
+   * This creates a complete low-res image for fast high-level tile generation
    */
   private async generateOverviewBitmap(): Promise<ImageBitmap | null> {
     const startTime = performance.now();
     
-    // Calculate overview size - target ~512px on the longest side
-    const maxOverviewSize = 512;
+    // Calculate overview size - target ~1024px on the longest side for better quality
+    const maxOverviewSize = 1024;
     const scale = Math.min(maxOverviewSize / this.width, maxOverviewSize / this.height);
     const overviewWidth = Math.ceil(this.width * scale);
     const overviewHeight = Math.ceil(this.height * scale);
@@ -736,28 +645,19 @@ export class TIFFTileSource extends BaseTileSource {
     }
     
     ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'medium';
+    ctx.imageSmoothingQuality = 'high';
     
-    // Sample tiles uniformly across the image
-    // Load just enough tiles to create a reasonable overview
-    const maxTilesToLoad = 16; // Limit to avoid loading too many
-    const tilesToLoadX = Math.min(this.tilesAcross, Math.ceil(Math.sqrt(maxTilesToLoad)));
-    const tilesToLoadY = Math.min(this.tilesDown, Math.ceil(maxTilesToLoad / tilesToLoadX));
-    
-    // Calculate step to sample tiles evenly
-    const stepX = Math.max(1, Math.floor(this.tilesAcross / tilesToLoadX));
-    const stepY = Math.max(1, Math.floor(this.tilesDown / tilesToLoadY));
-    
-    // Collect tiles to load
+    // Load ALL tiles to create a complete overview
+    // This is necessary for proper tile stitching
     const tileCoords: Array<{ tx: number; ty: number }> = [];
-    for (let ty = 0; ty < this.tilesDown; ty += stepY) {
-      for (let tx = 0; tx < this.tilesAcross; tx += stepX) {
+    for (let ty = 0; ty < this.tilesDown; ty++) {
+      for (let tx = 0; tx < this.tilesAcross; tx++) {
         tileCoords.push({ tx, ty });
       }
     }
     
-    // Load tiles in parallel with limited concurrency
-    const concurrency = Math.min(4, tileCoords.length);
+    // Load tiles in parallel with higher concurrency for faster overview generation
+    const concurrency = Math.min(8, tileCoords.length);
     let hasAnyTile = false;
     
     for (let i = 0; i < tileCoords.length; i += concurrency) {
