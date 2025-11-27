@@ -98,7 +98,7 @@ export class TIFFTileSource extends BaseTileSource {
   // Internal cache for level 0 tiles (needed to generate virtual pyramid tiles)
   // Limited to prevent memory bloat - only caches level 0 tiles
   private tileCache = new Map<string, ImageBitmap>();
-  private maxCachedTiles = 32; // Limit internal cache size
+  private maxCachedTiles = 16; // Reduced to prevent memory bloat (TileCache also caches)
   private tileAccessOrder: string[] = []; // LRU tracking
   
   // Compression and color settings
@@ -168,6 +168,7 @@ export class TIFFTileSource extends BaseTileSource {
   }
 
   async getTile(level: number, x: number, y: number): Promise<Tile | null> {
+    const startTime = performance.now();
     const levelInfo = this.levels[level];
     if (!levelInfo) {
       return null;
@@ -178,14 +179,23 @@ export class TIFFTileSource extends BaseTileSource {
       return null;
     }
     
+    let result: Tile | null;
+    
     // For level 0, load from native TIFF tiles (with internal caching)
     if (level === 0) {
-      return this.loadNativeTile(x, y);
+      result = await this.loadNativeTile(x, y);
+    } else {
+      // For higher levels, generate virtual tiles by downscaling
+      // Note: Virtual tiles are NOT cached internally - TileCache handles that
+      result = await this.generateVirtualTile(level, x, y);
     }
     
-    // For higher levels, generate virtual tiles by downscaling
-    // Note: Virtual tiles are NOT cached internally - TileCache handles that
-    return this.generateVirtualTile(level, x, y);
+    const elapsed = performance.now() - startTime;
+    if (elapsed > 200) {
+      console.warn(`[TIFF] Slow tile ${level}/${x}/${y}: ${elapsed.toFixed(0)}ms`);
+    }
+    
+    return result;
   }
   
   /**
@@ -460,7 +470,7 @@ export class TIFFTileSource extends BaseTileSource {
     
     // If too many tiles needed, generate from an intermediate level instead
     // This prevents loading dozens of tiles to generate one low-res tile
-    const maxTilesPerVirtual = 16;
+    const maxTilesPerVirtual = 4; // Reduced from 16 for faster initial load
     if (tilesNeeded > maxTilesPerVirtual && level > 1) {
       // Try to generate from level-1 instead of level 0
       return this.generateFromIntermediateLevel(level, x, y, levelInfo, tileWidth, tileHeight);

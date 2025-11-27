@@ -93,7 +93,7 @@ export class TileManager {
   constructor(options: TileManagerOptions) {
     this.source = options.source;
     this.cache = new TileCache(options.cache);
-    this.maxConcurrentLoads = options.maxConcurrentLoads ?? 6;
+    this.maxConcurrentLoads = options.maxConcurrentLoads ?? 12; // Increased for faster loading
     this.progressiveLoading = options.progressiveLoading ?? true;
     this.enablePrefetch = options.enablePrefetch ?? true;
     this.prefetchMargin = options.prefetchMargin ?? 1;
@@ -572,8 +572,8 @@ export class TileManager {
   }
 
   /**
-   * Schedule queue processing outside the current frame
-   * Uses requestIdleCallback when available, falls back to setTimeout
+   * Schedule queue processing
+   * Uses queueMicrotask for fast scheduling, ensuring tiles load as quickly as possible
    */
   private scheduleQueueProcessing(): void {
     if (this.queueProcessingScheduled || this.loadingQueue.length === 0) {
@@ -582,35 +582,26 @@ export class TileManager {
     
     this.queueProcessingScheduled = true;
     
-    // Use requestIdleCallback to process tiles when browser is idle
-    // This prevents tile decoding from blocking render frames
-    if (typeof requestIdleCallback !== 'undefined') {
-      requestIdleCallback(() => {
-        this.queueProcessingScheduled = false;
-        this.processQueue();
-      }, { timeout: 100 }); // Max delay 100ms
-    } else {
-      // Fallback: use setTimeout to defer to next event loop tick
-      setTimeout(() => {
-        this.queueProcessingScheduled = false;
-        this.processQueue();
-      }, 0);
-    }
+    // Use queueMicrotask for fastest possible scheduling
+    // Tile decoding happens asynchronously in the browser anyway,
+    // so we just need to kick off the requests quickly
+    queueMicrotask(() => {
+      this.queueProcessingScheduled = false;
+      this.processQueue();
+    });
   }
 
   /**
    * Process loading queue
-   * Only processes a limited number of tiles per call to avoid blocking
+   * Processes tiles aggressively to minimize time-to-first-paint
    */
   private async processQueue(): Promise<void> {
-    // Limit concurrent loads more aggressively during initial load
-    // to prevent CPU overload during first display
-    const effectiveMaxLoads = this.isInitialLoad ? 
-      Math.min(2, this.maxConcurrentLoads) : 
-      this.maxConcurrentLoads;
+    // Use full concurrent load capacity - don't throttle during initial load
+    // The browser/GPU will handle the actual parallelism appropriately
+    const effectiveMaxLoads = this.maxConcurrentLoads;
     
-    // Limit tiles started per processing cycle to avoid CPU spikes
-    const maxStartsPerCycle = this.isInitialLoad ? 1 : 2;
+    // Start multiple tiles per cycle for faster loading
+    const maxStartsPerCycle = 4;
     let startsThisCycle = 0;
     
     while (
@@ -638,7 +629,7 @@ export class TileManager {
         .finally(() => {
           this.activeLoads--;
           this.loadingTiles.delete(key);
-          // Schedule more processing (deferred)
+          // Schedule more processing immediately
           this.scheduleQueueProcessing();
         });
     }
@@ -654,7 +645,14 @@ export class TileManager {
    */
   private async loadTile(level: number, x: number, y: number): Promise<Tile | null> {
     try {
+      const startTime = performance.now();
       const tile = await this.source.getTile(level, x, y);
+      const loadTime = performance.now() - startTime;
+      
+      // Log slow tile loads for debugging
+      if (loadTime > 500) {
+        console.warn(`[TileManager] Slow tile load: ${level}/${x}/${y} took ${loadTime.toFixed(0)}ms`);
+      }
       
       if (tile) {
         this.cache.set(tile);
@@ -662,8 +660,8 @@ export class TileManager {
         // Track initial load completion
         if (this.isInitialLoad && !this.hasDisplayedFirstTile) {
           this.hasDisplayedFirstTile = true;
-          const loadTime = Date.now() - this.initialLoadStartTime;
-          console.debug(`[TileManager] First tile displayed in ${loadTime}ms`);
+          const totalTime = Date.now() - this.initialLoadStartTime;
+          console.debug(`[TileManager] First tile displayed in ${totalTime}ms (load: ${loadTime.toFixed(0)}ms)`);
         }
         
         return tile;
